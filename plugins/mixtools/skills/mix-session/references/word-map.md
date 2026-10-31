@@ -23,8 +23,8 @@ Measure with `audio_measure` (band energies, loudness, peaks, stereo) and `audio
 | thin, weak, small, no body | `bass` and `low_mid` lower than the reference | Raise 100–250 Hz on the bass, kick, or main instrument by 1–3 dB. Check that a low cut is not set too high. |
 | boxy, cardboard, honky, nasal | `low_mid` or `mid` peak in a narrow range | Find the peak with `audio_spectrogram` or stem measurements. Cut 2–3 dB with a narrow EQ band around 300–1000 Hz on the offending track. |
 | harsh, shrill, piercing, hurts my ears, tiring | `high_mid` higher than the reference | Cut 1–3 dB around 2–5 kHz on the loudest bright tracks (vocals, guitars, cymbals). |
-| hissy "s" sounds, spitty vocal | `presence` and `brilliance` spikes on the vocal stem | Add or adjust a de-esser on the vocal. |
-| dull, dark, muffled, lifeless, under a blanket | `presence` and `brilliance` lower than the reference | Raise 8–12 kHz by 1–2 dB on the vocal or the full mix (a "high shelf"). |
+| hissy "s" sounds, spitty vocal | `presence` and `brilliance` spikes on the vocal stem; bright vertical streaks in `audio_spectrogram` | Cut 2–4 dB with a narrow ACE EQ bell (bandwidth about 0.5) at the frequency of the streaks, usually 5–8 kHz, on the vocal. Ardour has no built-in de-esser. |
+| dull, dark, muffled, lifeless, under a blanket | `presence` and `brilliance` lower than the reference | Raise ACE EQ's high shelf (Gain H) 1–2 dB at about 8–10 kHz on the vocal or the main instrument. |
 
 ## Balance
 

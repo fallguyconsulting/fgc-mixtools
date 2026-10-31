@@ -1,0 +1,51 @@
+{
+  "manifest_version": "0.2",
+  "name": "mixtools",
+  "display_name": "Mixtools",
+  "version": "0.2.0",
+  "description": "Mix songs in Ardour with Claude: import tracks, change levels, pans, effects and sends, bounce, measure, and compare before and after.",
+  "long_description": "Mixtools lets Claude act as a mix engineer for someone who is not an audio engineer. It drives Ardour through Ardour's built-in MCP server, renders bounces with Ardour's command-line exporter, and measures them (loudness, peaks, stereo, frequency balance) so Claude can explain what it hears in numbers and check every change. Requires the Ardour build distributed with mixtools.",
+  "author": {
+    "name": "Fall Guy Consulting"
+  },
+  "homepage": "https://github.com/fallguyconsulting/fgc-mixtools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fallguyconsulting/fgc-mixtools"
+  },
+  "license": "MIT",
+  "keywords": ["ardour", "mixing", "audio", "music"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "mixtools_status", "description": "Check Ardour, its MCP server, the open song, and the workspace folders." },
+    { "name": "mixtools_setup", "description": "Create the workspace folders and turn on Ardour's MCP server." },
+    { "name": "song_new", "description": "Create a song in Ardour and import audio files as tracks." },
+    { "name": "song_open", "description": "Open a song in Ardour, or list songs." },
+    { "name": "ardour_tools", "description": "List Ardour's own MCP tools." },
+    { "name": "ardour_call", "description": "Call one of Ardour's MCP tools." },
+    { "name": "snapshot_save", "description": "Save the mixer settings so they can be restored." },
+    { "name": "snapshot_list", "description": "List mixer snapshots." },
+    { "name": "snapshot_restore", "description": "Restore a mixer snapshot." },
+    { "name": "bounce", "description": "Render the mix, and optionally single tracks, to WAV." },
+    { "name": "audio_measure", "description": "Measure loudness, peaks, stereo, and frequency balance." },
+    { "name": "audio_compare", "description": "Compare two audio files and describe the differences." },
+    { "name": "audio_spectrogram", "description": "Draw a spectrogram image of an audio file." },
+    { "name": "audio_play", "description": "Play an audio file." },
+    { "name": "audio_stop", "description": "Stop playback." },
+    { "name": "reference_list", "description": "List reference songs and their loudness." }
+  ],
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

@@ -3,12 +3,12 @@
   "owner": {
     "name": "Fall Guy Consulting"
   },
-  "description": "Tools that let Claude act as a mix engineer for Logic Pro users who are not audio engineers.",
+  "description": "Tools that let Claude act as a mix engineer in Ardour for people who are not audio engineers.",
   "plugins": [
     {
       "name": "mixtools",
       "source": "./plugins/mixtools",
-      "description": "Mix a Logic Pro song with Claude: describe what you hear in your own words, and Claude measures the mix, makes small reversible changes, and lets you compare before and after."
+      "description": "Mix a song in Ardour with Claude: describe what you hear in your own words, and Claude measures the mix, makes small reversible changes, and lets you compare before and after."
     }
   ]
 }

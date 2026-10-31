@@ -1,49 +1,49 @@
 # Mixtools tools
 
-The mixtools desktop extension runs on the person's Mac and provides these tools. They work on the song open in Logic Pro and on audio files in the mixtools workspace folder.
+The mixtools desktop extension runs on the person's Mac and provides these tools. It drives Ardour through Ardour's built-in MCP server, which listens on this Mac only.
 
-The workspace folder is `~/Music/Mixtools/`. It holds:
+The workspace folder is `~/Music/Mixtools/`:
 
 | Folder | What goes there |
 | --- | --- |
+| `Songs/<song>/` | One Ardour session per song, made by `song_new`. |
 | `References/` | Songs the person wants their mix to sound like. The person adds these. |
-| `Bounces/<project>/` | Every bounce, named with a number and a label so before and after stay in order. |
-| `Snapshots/<project>/` | Saved copies of the Logic project, one per change. |
+| `Bounces/<song>/` | Every bounce, numbered in order: `001-start.wav`, `002-vocal-up.wav`, with stems beside them. |
 
-## Setup and status
-
-| Tool | Does | Returns |
-| --- | --- | --- |
-| `mixtools_status` | Checks everything the mix loop needs. | Extension version; Logic Pro installed, version, running; Accessibility and Automation permissions; workspace folder path; downloaded components; a list of problems, each with the fix. |
-| `mixtools_setup` | Creates the workspace folders and downloads any missing components from the fgc-mixtools GitHub releases. Safe to run again. | What it created or downloaded, and anything that failed. |
-| `mixtools_open_settings` | Opens a System Settings page. Takes `page`: `accessibility` or `automation`. | Confirmation that the page opened. |
-
-## Logic Pro
+## Setup and songs
 
 | Tool | Does | Returns |
 | --- | --- | --- |
-| `logic_project_info` | Reads the open project. | Project name, file path, tempo, length, sample rate, whether it has unsaved changes. |
-| `logic_mixer_read` | Reads every channel strip. | Per track: name, type, volume (dB), pan, mute, solo, sends and their levels, output, plugins in order with bypass state. |
-| `logic_set` | Changes one channel strip setting. Takes `track`, `setting` (`volume`, `pan`, `mute`, `solo`, or `send:<n>`), and `value`. | The old value and the new value, read back from Logic Pro. |
-| `logic_plugin_read` | Reads one plugin's parameters. Takes `track` and `plugin` (name or slot). | Parameter names, values, and ranges. |
-| `logic_plugin_set` | Changes one plugin parameter. Takes `track`, `plugin`, `parameter`, and `value`. | The old value and the new value, read back from Logic Pro. |
-| `logic_bounce` | Bounces the song to the workspace. Takes `label`, and optional `tracks` for stems and `range` (bars or seconds). | Paths of the bounced files. |
+| `mixtools_status` | Checks Ardour, its MCP server, the open song, and the workspace. | Ardour version and state, the open song, folders, and a list of problems, each with its fix. |
+| `mixtools_setup` | Creates the workspace folders and turns on Ardour's MCP server. The second part needs Ardour closed. Safe to run again. | What changed, and a fresh status. |
+| `song_new` | Creates a session in `Songs/`, opens it in Ardour, and imports `files` as one track each, named by `track_names`. Needs Ardour closed. | Song folder and the created tracks. |
+| `song_open` | Opens a song. With no `path`, lists the songs instead. | Session info, or the song list. |
+
+## Ardour
+
+| Tool | Does |
+| --- | --- |
+| `ardour_tools` | Lists Ardour's tools, filtered by `filter`, or returns one tool's schema by `name`. |
+| `ardour_call` | Calls an Ardour tool by `name` with `arguments`. See `ardour.md`. |
 
 ## Snapshots
 
 | Tool | Does | Returns |
 | --- | --- | --- |
-| `snapshot_save` | Saves the project and copies it to the snapshots folder. Takes `label`. | Snapshot id, label, time. |
-| `snapshot_list` | Lists snapshots for the open project. | Id, label, and time for each. |
-| `snapshot_restore` | Closes the project and reopens the chosen snapshot as the working project. Saves a snapshot of the current state first, so restoring is itself undoable. Takes `id`. | The restored snapshot, and the id of the safety snapshot. |
+| `snapshot_save` | Stores the mixer settings (faders, pans, mutes, solos, plugin settings) under a `label`. | Snapshot id. |
+| `snapshot_list` | Lists this song's snapshots. | Id, label, time. |
+| `snapshot_restore` | Restores snapshot `id`, after saving the current settings as a safety snapshot. | The restored snapshot and the safety snapshot's id. |
 
-## Audio
+## Bouncing and audio
 
 | Tool | Does | Returns |
 | --- | --- | --- |
-| `audio_measure` | Measures one audio file. Takes `path` and optional `range`. | Integrated loudness (LUFS), loudness range (LU), sample peak (dBFS), true peak (dBTP), crest factor, clipping count, stereo correlation and width, mono compatibility warning, energy per band (`sub`, `bass`, `low_mid`, `mid`, `high_mid`, `presence`, `brilliance`). |
-| `audio_compare` | Measures two files and reports the differences. Takes `a`, `b`, and `match_loudness` (default true, so tone differences are not hidden by level differences). | Each measurement for both files and the difference, plus the largest differences in plain words. |
-| `audio_spectrogram` | Draws a spectrogram image of a file. Takes `path` and optional `range`. | A PNG image: time left to right, frequency bottom to top, brightness as energy. |
-| `reference_list` | Lists songs in the references folder. | File names, lengths, and loudness. |
-| `audio_play` | Plays a file through the Mac's speakers or headphones. Takes `path` and optional `range`. Stops anything already playing. | Confirmation. |
+| `bounce` | Saves the song and renders it to 32-bit float WAV. `stems` renders named tracks alone too. | Paths of the mix and stems. |
+| `audio_measure` | Measures one file, or `start` to `end` seconds of it. Reads WAV, AIFF, MP3, M4A, FLAC, and CAF. | Integrated loudness (LUFS), loudness range (LU), short-term and momentary maximum, sample and true peak, RMS, crest factor, clipped samples, samples over full scale, stereo correlation and width, mono loss and warning, and band levels: each band's share of the file's energy in dB (`sub`, `bass`, `low_mid`, `mid`, `high_mid`, `presence`, `brilliance`). |
+| `audio_compare` | Measures `a` and `b` and subtracts. | Both measurements, `difference_b_minus_a`, and `largest_differences` in plain words. |
+| `audio_spectrogram` | Draws a file's spectrogram. | A PNG image: time left to right, 20 Hz at the bottom to 20 kHz at the top (log scale), with faint lines at 50, 100, 200, 500 Hz and 1, 2, 5, 10 kHz. |
+| `audio_play` | Plays a file, or `start` to `end` seconds of it, on the Mac's speakers or headphones. | Confirmation. |
 | `audio_stop` | Stops playback. | Confirmation. |
+| `reference_list` | Lists the references folder. | Each file's length and loudness. |
+
+Bounces are float files, so a mix that goes over full scale shows its true level instead of being cut off. `over_full_scale_samples` counts those samples. A finished release must have none.
