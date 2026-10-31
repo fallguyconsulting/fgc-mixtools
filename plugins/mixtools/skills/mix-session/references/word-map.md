@@ -43,7 +43,7 @@ Measure with `audio_measure` (band energies, loudness, peaks, stereo) and `audio
 | They say | Check | Likely fix |
 | --- | --- | --- |
 | too quiet compared to other songs | Integrated loudness vs. the reference | During mixing, this is normal. Explain that release loudness is the last step. When they are ready to finish, see `targets.md`. |
-| squashed, flat, no life, tiring, loud but small | Crest factor and loudness range lower than the reference | Back off compression or the limiter on the stereo output. |
+| squashed, flat, no life, tiring, loud but small | Crest factor and loudness range lower than the reference | Back off compression, or render the master again at a lower `target_lufs`. |
 | distorted, crackles, clicks | Peaks at or above 0 dBFS; true peak above 0 dBTP; clipping count above zero | Find the track or bus that clips with stem measurements. Lower that track's level, not the master fader. |
 | quiet parts too quiet, loud parts too loud | Loudness range much higher than the reference | Add light compression on the instrument that swings the most, or ride its level with automation. |
 

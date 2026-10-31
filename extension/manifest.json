@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "mixtools",
   "display_name": "Mixtools",
-  "version": "0.2.0",
-  "description": "Mix songs in Ardour with Claude: import tracks, change levels, pans, effects and sends, bounce, measure, and compare before and after.",
-  "long_description": "Mixtools lets Claude act as a mix engineer for someone who is not an audio engineer. It drives Ardour through Ardour's built-in MCP server, renders bounces with Ardour's command-line exporter, and measures them (loudness, peaks, stereo, frequency balance) so Claude can explain what it hears in numbers and check every change. Requires the Ardour build distributed with mixtools.",
+  "version": "0.3.0",
+  "description": "Mix and master songs in Ardour with Claude: import tracks, change levels, pans, effects and sends, bounce, measure, compare before and after, and render release-ready masters for streaming.",
+  "long_description": "Mixtools lets Claude act as a mix engineer for someone who is not an audio engineer. It drives Ardour through Ardour's built-in MCP server, renders bounces with Ardour's command-line exporter, and measures them (loudness, peaks, stereo, frequency balance) so Claude can explain what it hears in numbers and check every change. It masters finished mixes for streaming with a true-peak limiter and checks masters against distributor and streaming targets. Requires the Ardour build distributed with mixtools.",
   "author": {
     "name": "Fall Guy Consulting"
   },
@@ -40,6 +40,8 @@
     { "name": "audio_spectrogram", "description": "Draw a spectrogram image of an audio file." },
     { "name": "audio_play", "description": "Play an audio file." },
     { "name": "audio_stop", "description": "Stop playback." },
+    { "name": "master_render", "description": "Master a mix bounce for streaming: loudness, true-peak limiting, trim, fade, dither." },
+    { "name": "release_check", "description": "Check whether a master is ready to upload for streaming release." },
     { "name": "reference_list", "description": "List reference songs and their loudness." }
   ],
   "compatibility": {

@@ -207,7 +207,7 @@ function windowPowers(weighted, win, hop) {
   return out;
 }
 
-function loudness(channels, sr) {
+export function loudness(channels, sr) {
   // BS.1770 weights left, right and center at 1.0. Surround channels are not expected.
   const weighted = channels.slice(0, 2).map((ch) => kWeight(ch, sr));
 
@@ -243,22 +243,41 @@ function loudness(channels, sr) {
 // ---------------------------------------------------------------------------
 // Peaks
 
-/** True peak by 4x oversampling with a 48-tap windowed-sinc interpolator. */
-function truePeak(ch) {
-  const phases = 4, taps = 12;
-  const half = taps / 2;
+// The true-peak meter and the mastering limiter share one interpolator, so the
+// limiter holds exactly the peak the meter reports.
+const TP_PHASES = 4;
+const TP_TAPS = 12;
+const TP_HALF = TP_TAPS / 2;
+const TP_COEF = (() => {
   const coef = [];
-  for (let p = 1; p < phases; p++) {
-    const frac = p / phases;
-    const c = new Float64Array(taps);
-    for (let k = 0; k < taps; k++) {
-      const t = k - half + 1 - frac;
+  for (let p = 1; p < TP_PHASES; p++) {
+    const frac = p / TP_PHASES;
+    const c = new Float64Array(TP_TAPS);
+    for (let k = 0; k < TP_TAPS; k++) {
+      const t = k - TP_HALF + 1 - frac;
       const sinc = t === 0 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
-      const w = 0.5 * (1 + Math.cos((Math.PI * t) / (half + 1)));
+      const w = 0.5 * (1 + Math.cos((Math.PI * t) / (TP_HALF + 1)));
       c[k] = sinc * w;
     }
     coef.push(c);
   }
+  return coef;
+})();
+
+/** The largest interpolated value between ch[i] and ch[i+1], as an absolute level. */
+function interSamplePeak(ch, i) {
+  let peak = 0;
+  for (const c of TP_COEF) {
+    let s = 0;
+    for (let k = 0; k < TP_TAPS; k++) s += c[k] * ch[i - TP_HALF + 1 + k];
+    const v = Math.abs(s);
+    if (v > peak) peak = v;
+  }
+  return peak;
+}
+
+/** True peak by 4x oversampling with a 48-tap windowed-sinc interpolator. */
+export function truePeak(ch) {
   let peak = 0;
   for (let i = 0; i < ch.length; i++) {
     const v = Math.abs(ch[i]);
@@ -267,16 +286,29 @@ function truePeak(ch) {
   // An inter-sample peak can only beat the sample peak between samples that are
   // already near it, so skip quiet stretches.
   const floor = peak * 0.5;
-  for (let i = half - 1; i < ch.length - half; i++) {
+  for (let i = TP_HALF - 1; i < ch.length - TP_HALF; i++) {
     if (Math.abs(ch[i]) < floor && Math.abs(ch[i + 1]) < floor) continue;
-    for (const c of coef) {
-      let s = 0;
-      for (let k = 0; k < taps; k++) s += c[k] * ch[i - half + 1 + k];
-      const v = Math.abs(s);
-      if (v > peak) peak = v;
-    }
+    const v = interSamplePeak(ch, i);
+    if (v > peak) peak = v;
   }
   return peak;
+}
+
+/**
+ * Per-sample true-peak envelope over all channels: for each i, the largest of
+ * |x[i]| and the interpolated values between x[i] and x[i+1], in any channel.
+ */
+export function peakEnvelope(channels) {
+  const n = channels[0].length;
+  const env = new Float32Array(n);
+  for (const ch of channels) {
+    for (let i = 0; i < n; i++) {
+      let v = Math.abs(ch[i]);
+      if (i >= TP_HALF - 1 && i < n - TP_HALF) v = Math.max(v, interSamplePeak(ch, i));
+      if (v > env[i]) env[i] = v;
+    }
+  }
+  return env;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,11 +395,15 @@ function bandLevels(channels, sr) {
 // ---------------------------------------------------------------------------
 // Measure
 
-const round = (v, d = 1) => (Number.isFinite(v) ? Math.round(v * 10 ** d) / 10 ** d : null);
-const db = (v) => 20 * Math.log10(Math.max(v, 1e-12));
+export const round = (v, d = 1) => (Number.isFinite(v) ? Math.round(v * 10 ** d) / 10 ** d : null);
+export const db = (v) => 20 * Math.log10(Math.max(v, 1e-12));
 
 export async function measure(file, range = {}) {
-  const audio = await loadAudio(file, range);
+  return measureAudio(await loadAudio(file, range), path.basename(file));
+}
+
+/** Measure audio already in memory: { sampleRate, channels }. */
+export function measureAudio(audio, name) {
   const { sampleRate: sr, channels } = audio;
   const frames = channels[0].length;
 
@@ -411,7 +447,7 @@ export async function measure(file, range = {}) {
 
   const bands = bandLevels(channels, sr);
   return {
-    file: path.basename(file),
+    file: name,
     seconds: round(frames / sr, 2),
     sample_rate: sr,
     channels: channels.length,

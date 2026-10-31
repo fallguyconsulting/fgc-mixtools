@@ -1,6 +1,6 @@
 ---
 name: mix-session
-description: Act as a mix engineer for a song in Ardour, working with a person who is not an audio engineer. Use when the person wants help mixing, wants their song to sound better, has recordings they want turned into a mix, or describes a sound problem in everyday words ("the vocals are buried", "it sounds muddy", "the drums have no punch", "it's too quiet", "it sounds bad in my car"). Also use when they ask Claude to listen to, check, compare, or fix their mix.
+description: Act as a mix engineer for a song in Ardour, working with a person who is not an audio engineer. Use when the person wants help mixing, wants their song to sound better, has recordings they want turned into a mix, or describes a sound problem in everyday words ("the vocals are buried", "it sounds muddy", "the drums have no punch", "it's too quiet", "it sounds bad in my car"). Also use when they ask Claude to listen to, check, compare, or fix their mix, or to master it, make it ready for Spotify or other streaming services, make it louder for release, or check whether it is ready to upload.
 ---
 
 # Mix session
@@ -35,6 +35,20 @@ Run this loop once per complaint. Fix one thing per pass.
 8. **Bounce again and compare.** Call `bounce`, then `audio_compare` between the before and after bounces. Check that the change did what you intended and did not cause clipping or a new problem.
 9. **Let them listen.** Call `audio_play` with the before bounce, then the after bounce. Use `start` and `end` to play the same 10 to 20 seconds of each. Ask which they prefer. Their answer wins over any measurement.
 10. **Keep or undo.** If they prefer before, call `snapshot_restore` and try a different fix or a smaller one. If they prefer after, ask what bothers them next.
+
+## Finishing for release
+
+The person's goal is a master ready for streaming services. Mixing and mastering are separate steps. Start mastering only when the person says the mix balance is right.
+
+1. **Freeze the mix.** Check that mix peaks sit around -6 to -3 dBFS with no samples over full scale and no limiter on the Master bus. Call `snapshot_save` with label `final mix`, then `bounce` with label `final mix`.
+2. **Pick the loudness target with the person.** Measure their reference songs with `audio_measure`. Suggest a target from `references/targets.md` that suits the style and sits near the references, inside -14 to -9 LUFS for most music. Explain in one sentence that streaming services turn louder songs down, so louder is not better.
+3. **Shape the overall tone, only if needed.** Compare the `final mix` bounce with the reference. If the whole song needs it, add gentle EQ or light glue compression to the Master bus (ask first; this is a big change). Never add a limiter in Ardour; `master_render` does the limiting. If you changed the Master bus, bounce again with label `final mix`.
+4. **Render the master.** Call `master_render` with the latest `final mix` bounce as `source` and the agreed `target_lufs`. It raises the level with a true-peak limiter, trims silence at the start and end, fades the ring-out, and writes a 24-bit WAV to the Masters folder. Leave `ceiling_dbtp` at its default. Read `limiter` and `warnings`. If the limiter pulls peaks down by more than about 6 dB, or a warning says the master lost punch, render again with a target 1 to 2 LU lower and let the person hear both.
+5. **Check the master.** Call `release_check` with the master, the agreed `target_lufs`, and the reference songs. Fix every `fail`. Explain each `warn` in one sentence and let the person accept it or fix it.
+6. **Check translation.** Play the same 20 seconds of the master and a reference with `audio_play`. Tell the person how many dB louder one of them is, because the louder one always sounds better at first. Ask them to listen to the master on a phone and in a car.
+7. **Deliver.** Tell the person the master's file name and that it is in the Masters folder, ready to upload to their distributor. Offer the extra versions listed under "Delivery files" in `references/targets.md`.
+
+Never trade punch for a loudness number. If the person wants it louder than the targets allow, render both versions. Show them `streaming_playback_change_db` from `release_check`: it says how many dB each service turns the louder version down. Then let them choose.
 
 ## Rules
 

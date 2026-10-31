@@ -19,6 +19,7 @@ export const WORKSPACE = path.join(os.homedir(), "Music/Mixtools");
 export const SONGS = path.join(WORKSPACE, "Songs");
 export const REFERENCES = path.join(WORKSPACE, "References");
 export const BOUNCES = path.join(WORKSPACE, "Bounces");
+export const MASTERS = path.join(WORKSPACE, "Masters");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

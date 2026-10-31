@@ -9,6 +9,7 @@ The workspace folder is `~/Music/Mixtools/`:
 | `Songs/<song>/` | One Ardour session per song, made by `song_new`. |
 | `References/` | Songs the person wants their mix to sound like. The person adds these. |
 | `Bounces/<song>/` | Every bounce, numbered in order: `001-start.wav`, `002-vocal-up.wav`, with stems beside them. |
+| `Masters/<song>/` | Release masters made by `master_render`: `<song> (master -14 LUFS).wav`. These are the files to upload. |
 
 ## Setup and songs
 
@@ -47,3 +48,12 @@ The workspace folder is `~/Music/Mixtools/`:
 | `reference_list` | Lists the references folder. | Each file's length and loudness. |
 
 Bounces are float files, so a mix that goes over full scale shows its true level instead of being cut off. `over_full_scale_samples` counts those samples. A finished release must have none.
+
+## Mastering
+
+| Tool | Does | Returns |
+| --- | --- | --- |
+| `master_render` | Masters a mix bounce (`source`) without touching the Ardour session. Raises it to `target_lufs` with a lookahead true-peak limiter held at `ceiling_dbtp` (default -1 dBTP, or -2 dBTP above -14 LUFS). Trims silence at the start and end (`trim`, default true), fades the ring-out (`fade_out_seconds`, default 1; the fade starts only after the sound drops below -40 dBFS, so it never fades the final notes), and writes a dithered WAV (`bit_depth` 24 or 16, default 24) to `Masters/<song>/`. `song` and `label` set the file name. | The master's path, the settings used, `limiter` (`max_reduction_db`, `average_reduction_db_while_limiting`, `percent_of_time_over_1db`), seconds trimmed, measurements of the mix and the master, and `warnings` when the limiting costs punch or the target is out of reach. |
+| `release_check` | Checks a file against the release targets: format, sample rate, channels, loudness (against `target_lufs`, else -16 to -9 LUFS), true peak (against `ceiling_dbtp`, else the default ceiling), clipping, true peak after a 256 kbps AAC encode, silence and clicks at the start and end, mono, and loudness range and crest factor against `references` (default: every song in References; an empty list skips it). | `ready`, a one-line `verdict`, `checks` (each `pass`, `warn`, `fail`, or `skipped`, with the measured value, the target, and a plain-words note), `streaming_playback_change_db` (how many dB Spotify, YouTube/Tidal/Amazon, and Apple Music turn the song up or down), the reference measurements, and the full measurement. |
+
+The limiter cannot add more than about 12 dB of gain beyond what the loudness difference calls for. Past that point more gain adds distortion, not loudness, so `master_render` stops and reports the loudness it reached.

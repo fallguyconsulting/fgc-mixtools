@@ -1,6 +1,6 @@
 # fgc-mixtools
 
-Mixtools lets Claude act as a mix engineer in Ardour, the open-source recording and mixing app. You describe what you hear in your own words, like "the vocals are buried" or "it sounds muddy". Claude bounces your song, measures it, compares it to songs you like, makes one small change, and plays you the before and after. You decide what stays.
+Mixtools lets Claude act as a mix engineer in Ardour, the open-source recording and mixing app. You describe what you hear in your own words, like "the vocals are buried" or "it sounds muddy". Claude bounces your song, measures it, compares it to songs you like, makes one small change, and plays you the before and after. You decide what stays. When the mix is done, Claude renders a master for streaming services and checks it is ready to upload.
 
 Mixtools never edits your recordings. It saves the mixer settings before every change, so any change can be undone.
 

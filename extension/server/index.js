@@ -10,6 +10,7 @@ import readline from "node:readline";
 
 import * as ardour from "./ardour.js";
 import { compare, encodeWavFloat, loadAudio, measure } from "./audio.js";
+import { releaseCheck, renderMaster } from "./master.js";
 import { SPECTROGRAM_GRID_HZ, spectrogram } from "./spectrogram.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version;
@@ -33,7 +34,7 @@ const TOOLS = [
   {
     name: "mixtools_setup",
     description:
-      "Create the workspace folders (~/Music/Mixtools: Songs, References, Bounces) and turn on Ardour's MCP server in Ardour's settings. Turning the server on only works while Ardour is closed. Safe to run again.",
+      "Create the workspace folders (~/Music/Mixtools: Songs, References, Bounces, Masters) and turn on Ardour's MCP server in Ardour's settings. Turning the server on only works while Ardour is closed. Safe to run again.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -157,6 +158,42 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
+    name: "master_render",
+    description:
+      "Master a finished mix bounce for streaming release: raise it to a target loudness with a lookahead true-peak limiter, trim silence at the start and end, fade the ring-out, dither, and write a WAV to ~/Music/Mixtools/Masters/<song>/. Never changes the Ardour session. Returns the file, the limiter's work, the mix and master measurements, and warnings when the limiting costs punch. The source must be a mix with no limiter on Ardour's Master bus.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "The mix bounce to master, normally the 'final mix' bounce." },
+        target_lufs: { type: "number", minimum: -30, maximum: -5, description: "Integrated loudness to reach, agreed with the person, for example -14 or -11." },
+        ceiling_dbtp: { type: "number", minimum: -6, maximum: 0, description: "Highest true peak allowed. Default: -1 dBTP, or -2 dBTP when target_lufs is louder than -14." },
+        bit_depth: { type: "integer", enum: [24, 16], description: "Default 24. Use 16 only when the distributor or a CD requires it." },
+        trim: { type: "boolean", description: "Trim silence before the first sound and after the ring-out. Default true." },
+        fade_out_seconds: { type: "number", minimum: 0, maximum: 10, description: "Longest fade on the ring-out. The fade starts only after the sound drops below -40 dBFS, so it never fades the final notes. Default 1; 0 for none." },
+        song: { type: "string", description: "Song name for the folder and file. Default: the bounce's song." },
+        label: { type: "string", description: "Version label in the file name. Default: 'master <target> LUFS'." },
+      },
+      required: ["source", "target_lufs"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "release_check",
+    description:
+      "Check whether an audio file is ready to send to a distributor for streaming: file format, sample rate, channels, loudness, true peak, clipping, peaks after a 256 kbps AAC encode, silence and clicks at the start and end, mono, and punch and loudness range against reference songs. Returns pass, warn, fail, or skipped per check with a plain-words note, a verdict, and how much each streaming service turns the song up or down.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The master to check." },
+        target_lufs: { type: "number", description: "The loudness agreed with the person. Without it, the check uses -16 to -9 LUFS." },
+        ceiling_dbtp: { type: "number", description: "The true-peak ceiling. Default: -1 dBTP, or -2 dBTP when the file is louder than -14 LUFS." },
+        references: { type: "array", items: { type: "string" }, description: "Reference songs to compare punch and loudness range with. Default: every song in the References folder. An empty list skips the comparison." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "reference_list",
     description: "List the reference songs in ~/Music/Mixtools/References with their length and loudness.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -187,7 +224,7 @@ async function status() {
   } catch {}
   const enabled = await ardour.mcpEnabledInConfig();
   const folders = {};
-  for (const [k, p] of Object.entries({ songs: ardour.SONGS, references: ardour.REFERENCES, bounces: ardour.BOUNCES })) {
+  for (const [k, p] of Object.entries({ songs: ardour.SONGS, references: ardour.REFERENCES, bounces: ardour.BOUNCES, masters: ardour.MASTERS })) {
     folders[k] = { path: p, exists: await exists(p) };
   }
 
@@ -196,7 +233,8 @@ async function status() {
   if (version && enabled === false && !mcp) problems.push({ problem: "Ardour's MCP server is off.", fix: running ? "Ask the person to quit Ardour, then call mixtools_setup." : "Call mixtools_setup." });
   if (running && !mcp && enabled) problems.push({ problem: "Ardour is open but its MCP server is not answering.", fix: "If Ardour is still starting or showing a window, ask the person to finish it. If no song is open, call song_open or song_new." });
   if (mcp && !importTool) problems.push({ problem: "This Ardour cannot import audio for mixtools.", fix: "Install the Ardour build that came with mixtools; the standard Ardour download lacks the import tool." });
-  if (Object.values(folders).some((f) => !f.exists)) problems.push({ problem: "Workspace folders are missing.", fix: "Call mixtools_setup." });
+  // master_render creates Masters on first use, so only the others count.
+  if ([folders.songs, folders.references, folders.bounces].some((f) => !f.exists)) problems.push({ problem: "Workspace folders are missing.", fix: "Call mixtools_setup." });
 
   return {
     mixtools_version: VERSION,
@@ -209,7 +247,7 @@ async function status() {
 
 async function setup() {
   const created = [];
-  for (const p of [ardour.SONGS, ardour.REFERENCES, ardour.BOUNCES]) {
+  for (const p of [ardour.SONGS, ardour.REFERENCES, ardour.BOUNCES, ardour.MASTERS]) {
     if (!(await exists(p))) {
       await fs.mkdir(p, { recursive: true });
       created.push(p);
@@ -303,6 +341,8 @@ const HANDLERS = {
   },
   audio_play: (a) => play(a.path, a.start, a.end),
   audio_stop: () => stopPlayback(),
+  master_render: (a) => renderMaster(a, { mastersDir: ardour.MASTERS, bouncesDir: ardour.BOUNCES }),
+  release_check: (a) => releaseCheck(a, { referencesDir: ardour.REFERENCES, audioExts: AUDIO_EXTS }),
   reference_list: () => referenceList(),
 };
 
