@@ -20,6 +20,7 @@ export const RESULTS = ["pass", "fixed", "fail", "skipped"];
 
 const pad = (n) => String(n).padStart(2, "0");
 const stamp = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fileStamp = (d) => `${stamp(d).replace(":", "-")}-${pad(d.getSeconds())}`;
 const oneLine = (s) => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
 
 const HEADER = `# Notes for the mixtools team
@@ -64,6 +65,8 @@ export async function addNote({ kind, note, quote, song }, version) {
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
     body = HEADER;
+    // A new notes file starts the count of reported notes over.
+    await fs.rm(STATE_FILE, { force: true });
   }
   if (!body.endsWith("\n")) body += "\n";
   const parts = [stamp(), kind, `mixtools ${version}`, ...(song ? [`song "${oneLine(song)}"`] : []), text];
@@ -99,7 +102,8 @@ export async function makeReport({ summary, selftest, show_in_finder }, { versio
   for (const r of selftest ?? []) if (!RESULTS.includes(r.result)) throw new Error(`Each self-test result must be one of: ${RESULTS.join(", ")}.`);
 
   const now = new Date();
-  const name = `Mixtools report ${stamp(now).replace(":", "-")}.md`;
+  let name = `Mixtools report ${fileStamp(now)}.md`;
+  for (let n = 2; await fs.access(path.join(REPORTS, name)).then(() => true, () => false); n++) name = `Mixtools report ${fileStamp(now)} ${n}.md`;
   const file = path.join(REPORTS, name);
   const failed = (selftest ?? []).filter((r) => r.result === "fail").length;
   const lines = [

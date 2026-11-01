@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "mixtools",
   "display_name": "Mixtools",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Mix and master songs in Ardour with Claude: import tracks, change levels, pans, effects and sends, bounce, measure, compare before and after, and render release-ready masters for streaming.",
   "long_description": "Mixtools lets Claude act as a mix engineer for someone who is not an audio engineer. It drives Ardour through Ardour's built-in MCP server, renders bounces with Ardour's command-line exporter, and measures them (loudness, peaks, stereo, frequency balance) so Claude can explain what it hears in numbers and check every change. It sets a starting balance on newly imported tracks. It marks notes the person gives at a moment in the song and finds which track gets buried or jumps out there. It masters finished mixes for streaming with a true-peak limiter and checks masters against distributor and streaming targets. It makes alternate versions (instrumental, TV mix, a cappella, clean edit, stems) that match a master exactly, and archives finished songs. It keeps mix notes for each song, so a new conversation picks up where the last one stopped. It notes problems, struggles, and ideas for the mixtools team, runs a self-test of every feature on a generated test song, and writes reports the person can send. Requires the Ardour build distributed with mixtools.",
   "author": {

@@ -36,7 +36,9 @@ Call `mixtools_status`. Fix each problem as the `mixtools-setup` skill describes
 
 ### 3. Test song
 
-If Ardour is open, ask the person to save their song and quit Ardour (Session menu, then Quit). Then call `selftest_song`. If Ardour shows an audio setup window, ask them to click **Start**. Keep the result: its `audio.expected` values drive the checks below.
+If Ardour is open, ask the person to save their song and quit Ardour (Session menu, then Quit). Then call `selftest_song`. It opens Ardour and can wait up to two minutes for it. Keep the result: its `audio.expected` values drive the checks below.
+
+If `selftest_song` says Ardour did not finish opening, Ardour is probably showing a window, such as audio setup. Ask the person to click **Start** or **OK** in it, then quit Ardour without saving (the **Ardour9** menu, then **Quit**, then **Don't Save**). Then call `selftest_song` again; it replaces the half-made song. If it fails the same way twice, record `fail` and go to step 14.
 
 Pass: the result lists 6 imported tracks. From here on, before each step that changes anything, the open song must be "Mixtools Self-Test". If `mixtools_status` shows another song open, stop the self-test and tell the person.
 

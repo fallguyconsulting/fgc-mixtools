@@ -261,8 +261,21 @@ export async function selftestSong() {
 
   const files = await writeStems(SELFTEST_AUDIO);
 
-  const song = await ardour.newSong(SELFTEST_SONG, files, STEMS.map(([n]) => n));
-  await fs.writeFile(path.join(song.path, MARKER), JSON.stringify({ made_by: "mixtools selftest_song", time: new Date().toISOString() }, null, 2));
+  // Mark the song folder as the self-test's even when making the song fails
+  // part way (for example, Ardour waiting on its audio setup window), so the
+  // next self-test can replace the half-made song.
+  const dir = path.join(ardour.SONGS, SELFTEST_SONG);
+  const mark = async () => {
+    if (await exists(dir)) await fs.writeFile(path.join(dir, MARKER), JSON.stringify({ made_by: "mixtools selftest_song", time: new Date().toISOString() }, null, 2));
+  };
+  let song;
+  try {
+    song = await ardour.newSong(SELFTEST_SONG, files, STEMS.map(([n]) => n));
+  } catch (e) {
+    await mark();
+    throw new Error(`${e.message} The self-test song is only half made. Ask the person to click Start or OK in any Ardour window, then quit Ardour without saving (Ardour9 menu, then Quit, then Don't Save), then call selftest_song again; it replaces the half-made song.`);
+  }
+  await mark();
 
   const verse2 = PHRASES.find((p) => p.start >= CHORUS[1]);
   return {
