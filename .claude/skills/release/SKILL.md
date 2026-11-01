@@ -223,5 +223,5 @@ Print: previous version → new version; the bump level and its one-line rationa
 
 ## Notes
 
-- **The release does not ship Ardour.** The extension requires the mixtools build of Ardour, which is built, signed, and hand-delivered separately (`~/Documents/projects/research/ardour-build/build-ardour.sh`). When a release raises the Ardour requirement, that is a major bump (step 3), and the new Ardour build must reach users before or with it.
+- **The release does not ship Ardour.** The extension requires the mixtools build of Ardour, which `ardour/build-ardour.sh` builds, signs, and notarizes, and which is hand-delivered separately. When a release raises the Ardour requirement, that is a major bump (step 3), and the new Ardour build must reach users before or with it.
 - Users who pinned a `ref` when adding the marketplace stay on that pin. That is their choice, not a problem to solve here.

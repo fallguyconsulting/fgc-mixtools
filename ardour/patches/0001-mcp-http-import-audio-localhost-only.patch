@@ -1,0 +1,242 @@
+diff --git a/libs/surfaces/mcp_http/mcp_http_server.cc b/libs/surfaces/mcp_http/mcp_http_server.cc
+index d00c6d8..93ab5d2 100644
+--- a/libs/surfaces/mcp_http/mcp_http_server.cc
++++ b/libs/surfaces/mcp_http/mcp_http_server.cc
+@@ -51,6 +51,7 @@
+ #include "ardour/audio_track.h"
+ #include "ardour/audioregion.h"
+ #include "ardour/dB.h"
++#include "ardour/import_status.h"
+ #include "ardour/internal_send.h"
+ #include "ardour/location.h"
+ #include "ardour/midi_model.h"
+@@ -458,6 +459,9 @@ session_info_json (ARDOUR::Session& session)
+ {
+ 	std::ostringstream ss;
+ 	ss << "{\"sessionName\":\"" << json_escape (session.name ()) << "\""
++	   << ",\"snapshotName\":\"" << json_escape (session.snap_name ()) << "\""
++	   << ",\"path\":\"" << json_escape (session.path ()) << "\""
++	   << ",\"dirty\":" << (session.dirty () ? "true" : "false")
+ 	   << ",\"sampleRate\":" << session.nominal_sample_rate ()
+ 	   << ",\"tempoBpm\":" << transport_tempo_bpm (session)
+ 	   << ",\"transport\":" << transport_state_json (session)
+@@ -3045,6 +3049,7 @@ MCPHttpServer::start ()
+ #endif
+ 
+ 	_info.port      = _port;
++	_info.iface     = "127.0.0.1"; /* accept connections from this machine only */
+ 	_info.protocols = _protocols;
+ 	_info.gid       = -1;
+ 	_info.uid       = -1;
+@@ -3162,6 +3167,13 @@ MCPHttpServer::handle_http (struct lws* wsi, ClientContext& ctx)
+ 		path = uri;
+ 
+ 		if (path == "/mcp") {
++			/* Browsers send an Origin header with every cross-site POST.
++			 * MCP clients running as local processes do not. Refusing
++			 * requests that carry one stops web pages from driving Ardour.
++			 */
++			if (lws_hdr_total_length (wsi, WSI_TOKEN_ORIGIN) > 0) {
++				return send_http_status (wsi, 403);
++			}
+ 			ctx.mcp_post = true;
+ 			return 0;
+ 		}
+@@ -4197,9 +4209,152 @@ handle_session_recall_mixer_scene_tool (ARDOUR::Session& session, const pt::ptre
+ 	    std::string ("{\"content\":[{\"type\":\"text\",\"text\":\"Mixer scene recalled\"}],\"structuredContent\":") + structured.str () + "}");
+ }
+ 
++static std::string
++handle_session_import_audio_tool (ARDOUR::Session& session, const pt::ptree& root, const std::string& id)
++{
++	std::vector<std::string> paths;
++	std::vector<std::string> track_names;
++
++	if (boost::optional<const pt::ptree&> p = root.get_child_optional ("params.arguments.paths")) {
++		for (pt::ptree::value_type const& v : *p) {
++			paths.push_back (v.second.get_value<std::string> ());
++		}
++	}
++	if (boost::optional<const pt::ptree&> n = root.get_child_optional ("params.arguments.trackNames")) {
++		for (pt::ptree::value_type const& v : *n) {
++			track_names.push_back (v.second.get_value<std::string> ());
++		}
++	}
++	if (paths.empty ()) {
++		return jsonrpc_error (id, -32602, "paths must be a non-empty array of absolute audio file paths");
++	}
++	for (std::string const& path : paths) {
++		if (!g_path_is_absolute (path.c_str ()) || !g_file_test (path.c_str (), G_FILE_TEST_IS_REGULAR)) {
++			return jsonrpc_error (id, -32602, std::string ("Not an absolute path to an existing file: ") + path);
++		}
++	}
++
++	const int64_t position_sample = root.get<int64_t> ("params.arguments.positionSample", 0);
++	if (position_sample < 0) {
++		return jsonrpc_error (id, -32602, "positionSample must be >= 0");
++	}
++	const Temporal::timepos_t pos ((samplepos_t)position_sample);
++
++	/* Session::import_files() and region creation use the calling thread's tempo map. */
++	Temporal::TempoMap::fetch ();
++	ARDOUR::Session::StateProtector sp (&session);
++
++	uint32_t out_chans = 2;
++	if (session.master_out ()) {
++		out_chans = std::max<uint32_t> (1, session.master_out ()->n_inputs ().n_audio ());
++	}
++
++	std::ostringstream imported;
++	imported << "[";
++
++	for (size_t i = 0; i < paths.size (); ++i) {
++		std::string const& path = paths[i];
++
++		/* Copy the file into the session, converting to the session's sample rate,
++		 * the same way the editor's import dialog does.
++		 */
++		ARDOUR::ImportStatus status;
++		status.paths.push_back (path);
++		status.quality                 = ARDOUR::SrcBest;
++		status.replace_existing_source = false;
++		status.split_midi_channels     = false;
++		status.import_markers          = false;
++		status.midi_track_name_source  = ARDOUR::SMFTrackNumber;
++		status.freeze                  = false;
++		status.done                    = false;
++		status.cancel                  = false;
++		status.current                 = 1;
++		status.total                   = 1;
++
++		session.import_files (status);
++
++		ARDOUR::SourceList sources;
++		for (std::shared_ptr<ARDOUR::Source> const& s : status.sources) {
++			if (s && !s->empty ()) {
++				sources.push_back (s);
++			}
++		}
++		if (status.cancel || sources.empty ()) {
++			return jsonrpc_error (id, -32000, std::string ("Import failed: ") + path);
++		}
++		if (sources.front ()->type () != ARDOUR::DataType::AUDIO) {
++			return jsonrpc_error (id, -32602, std::string ("Not an audio file: ") + path);
++		}
++
++		const std::string name = (i < track_names.size () && !track_names[i].empty ())
++		                             ? track_names[i]
++		                             : std::string (PBD::basename_nosuffix (path));
++
++		PBD::PropertyList plist;
++		plist.add (ARDOUR::Properties::start, Temporal::timecnt_t (Temporal::AudioTime));
++		plist.add (ARDOUR::Properties::length, sources.front ()->length ());
++		plist.add (ARDOUR::Properties::name, name);
++		plist.add (ARDOUR::Properties::layer, 0);
++		plist.add (ARDOUR::Properties::whole_file, true);
++		plist.add (ARDOUR::Properties::external, true);
++		plist.add (ARDOUR::Properties::opaque, true);
++
++		std::shared_ptr<ARDOUR::Region> whole = ARDOUR::RegionFactory::create (sources, plist);
++
++		std::list<std::shared_ptr<ARDOUR::AudioTrack>> tracks = session.new_audio_track (
++		    (int)sources.size (),
++		    (int)out_chans,
++		    std::shared_ptr<ARDOUR::RouteGroup> (),
++		    1,
++		    name,
++		    ARDOUR::PresentationInfo::max_order,
++		    ARDOUR::Normal,
++		    true,
++		    false);
++		if (tracks.empty () || !tracks.front ()) {
++			return jsonrpc_error (id, -32000, std::string ("Could not create a track for: ") + path);
++		}
++		std::shared_ptr<ARDOUR::AudioTrack> track = tracks.front ();
++
++		std::shared_ptr<ARDOUR::Playlist> playlist = track->playlist ();
++		std::shared_ptr<ARDOUR::Region>   region   = ARDOUR::RegionFactory::create (whole, whole->derive_properties ());
++		playlist->clear_changes ();
++		playlist->clear_owned_changes ();
++		playlist->add_region (region, pos);
++
++		/* Export renders the session range, so it must cover the new material. */
++		session.maybe_update_session_range (region->position (), region->end_position ());
++
++		imported << (i ? "," : "")
++		         << "{\"path\":\"" << json_escape (path) << "\""
++		         << ",\"trackId\":\"" << json_escape (track->id ().to_s ()) << "\""
++		         << ",\"trackName\":\"" << json_escape (track->name ()) << "\""
++		         << ",\"regionName\":\"" << json_escape (region->name ()) << "\""
++		         << ",\"channels\":" << sources.size ()
++		         << ",\"positionSample\":" << region->position ().samples ()
++		         << ",\"lengthSamples\":" << region->length ().samples ()
++		         << "}";
++	}
++
++	imported << "]";
++
++	std::ostringstream structured;
++	structured << "{\"imported\":" << imported.str ()
++	           << ",\"session\":" << session_info_json (session)
++	           << "}";
++
++	return jsonrpc_result (
++	    id,
++	    std::string ("{\"content\":[{\"type\":\"text\",\"text\":\"Audio imported\"}],\"structuredContent\":") + structured.str () + "}");
++}
++
+ static bool
+ dispatch_session_tool_call (ARDOUR::Session& session, const std::string& tool_name, const pt::ptree& root, const std::string& id, std::string& response)
+ {
++	if (tool_name == "session/import_audio") {
++		response = handle_session_import_audio_tool (session, root, id);
++		return true;
++	}
+ 	if (tool_name == "session/get_info") {
+ 		response = handle_session_get_info_tool (session, id);
+ 		return true;
+diff --git a/libs/surfaces/mcp_http/tools_json.inc b/libs/surfaces/mcp_http/tools_json.inc
+index 5cbd69b..bf34f11 100644
+--- a/libs/surfaces/mcp_http/tools_json.inc
++++ b/libs/surfaces/mcp_http/tools_json.inc
+@@ -42,6 +42,40 @@ R"mcp(
+         "additionalProperties": false
+       }
+     },
++    {
++      "name": "session_import_audio",
++      "title": "Import Audio",
++      "description": "Import audio files into the session, one new track per file. Files are copied into the session and converted to the session sample rate. The session range is extended to cover the new regions.",
++      "inputSchema": {
++        "type": "object",
++        "properties": {
++          "paths": {
++            "type": "array",
++            "items": {
++              "type": "string"
++            },
++            "minItems": 1,
++            "description": "Absolute paths of audio files to import."
++          },
++          "trackNames": {
++            "type": "array",
++            "items": {
++              "type": "string"
++            },
++            "description": "Optional track names, matched to paths by position. Defaults to each file's name without extension."
++          },
++          "positionSample": {
++            "type": "integer",
++            "minimum": 0,
++            "description": "Timeline position for the new regions, in samples. Defaults to 0."
++          }
++        },
++        "required": [
++          "paths"
++        ],
++        "additionalProperties": false
++      }
++    },
+     {
+       "name": "session_undo",
+       "title": "Undo",

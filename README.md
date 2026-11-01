@@ -54,8 +54,21 @@ You don't need a GitHub account to report a problem or suggest an idea. While yo
 | `plugins/mixtools/skills/mixtools-setup/` | The skill that walks a new user through setup. |
 | `plugins/mixtools/skills/mixtools-selftest/` | The self-test skill. It runs only when someone asks for the self-test by name. |
 | `extension/` | The mixtools desktop extension (`mixtools.mcpb`): a dependency-free Node.js MCP server that drives Ardour and measures audio. |
+| `ardour/` | The script that builds the mixtools build of Ardour, and our patch to Ardour's source. |
 
 The extension ships as a GitHub release asset. It needs the mixtools build of Ardour, which adds an audio import tool to Ardour's built-in MCP server and limits that server to connections from the same Mac.
+
+## Building Ardour
+
+`ardour/build-ardour.sh` downloads Ardour 9.8's source into `ardour/src/`, applies the patches in `ardour/patches/`, builds it, and writes a signed disk image to `ardour/dist/`. Git ignores all three output folders. The script's header lists the Homebrew libraries it needs.
+
+```
+SIGN_IDENTITY="Developer ID Application: Fall Guy LLC (J4R9FTUGW2)" \
+NOTARY_PROFILE=mixtools-notary \
+ardour/build-ardour.sh
+```
+
+With `NOTARY_PROFILE` set, the script has Apple notarize the disk image, so macOS opens it on any Mac without a warning. Make the profile once with `xcrun notarytool store-credentials mixtools-notary --apple-id <Apple ID> --team-id J4R9FTUGW2`. Share the disk image only inside the organization; the release does not publish it.
 
 ## Developing locally
 
