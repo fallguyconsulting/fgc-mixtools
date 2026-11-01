@@ -142,6 +142,7 @@ export async function loadAudio(file, { start, end } = {}) {
   const len = audio.channels[0].length;
   const a = Math.max(0, Math.floor((start ?? 0) * sr));
   const b = Math.min(len, end != null ? Math.floor(end * sr) : len);
+  if (a >= len) throw new Error(`start (${start} s) is past the end of ${path.basename(file)} (${(len / sr).toFixed(1)} s long)`);
   if (a > 0 || b < len) {
     audio.channels = audio.channels.map((ch) => ch.slice(a, Math.max(a, b)));
   }
@@ -205,6 +206,31 @@ function windowPowers(weighted, win, hop) {
     out.push(sum);
   }
   return out;
+}
+
+/**
+ * Loudness of any stretch of the audio, in LUFS without gating:
+ * between(startSeconds, endSeconds). K-weights the audio once.
+ */
+export function loudnessMeter(channels, sr) {
+  const prefix = channels.slice(0, 2).map((ch) => {
+    const w = kWeight(ch, sr);
+    const p = new Float64Array(w.length + 1);
+    for (let i = 0; i < w.length; i++) p[i + 1] = p[i] + w[i] * w[i];
+    return p;
+  });
+  const len = channels[0].length;
+  return {
+    seconds: len / sr,
+    between(start, end) {
+      const a = Math.max(0, Math.min(len, Math.round(start * sr)));
+      const b = Math.max(a, Math.min(len, Math.round(end * sr)));
+      if (b === a) return -Infinity;
+      let sum = 0;
+      for (const p of prefix) sum += (p[b] - p[a]) / (b - a);
+      return toLufs(sum);
+    },
+  };
 }
 
 export function loudness(channels, sr) {
@@ -368,7 +394,7 @@ export function monoMix(channels) {
 }
 
 /** Share of spectral energy in each band, in dB relative to the 20 Hz - 20 kHz total. */
-function bandLevels(channels, sr) {
+export function bandLevels(channels, sr) {
   const n = 8192;
   const x = monoMix(channels);
   const win = hann(n);
@@ -469,7 +495,7 @@ export function measureAudio(audio, name) {
 // ---------------------------------------------------------------------------
 // Compare
 
-const BAND_WORDS = {
+export const BAND_WORDS = {
   sub: "deep bass (20-60 Hz)",
   bass: "bass (60-250 Hz)",
   low_mid: "low mids (250-500 Hz)",

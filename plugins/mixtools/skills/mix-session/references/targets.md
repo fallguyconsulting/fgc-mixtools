@@ -69,6 +69,6 @@ These ranges describe what people release, not what anyone should aim for.
 | Format | WAV, 24-bit, at the session's sample rate (44.1 or 48 kHz). Use 16-bit with dither only when the distributor or a CD requires it. Never send MP3 or AAC to a distributor. |
 | Start | Trim silence before the first sound to a fraction of a second. Keep any intentional count-in or room tone. |
 | End | Let the last note ring out, then fade the final second or so to silence so the file ends without a click. |
-| Translation | Before calling a master done, check mono (`release_check`'s mono check), compare with a reference, and ask the person to listen on a phone and in a car. |
+| Translation | Before calling a master done, check mono (`release_check`'s mono check), compare with a reference at matched loudness, listen through the phone, car, and mono simulations in `audio_play`, and ask the person to listen on their own phone and in their own car. |
 | Several songs (EP or album) | Keep the songs' loudness consistent with each other and with how they should feel in sequence. Tidal keeps the relative levels inside an album. |
-| Extra versions | Distributors, sync licensing, and remixers often ask for an instrumental, a clean (radio) edit, and stems. Offer to make them once the main master is approved. |
+| Extra versions | Distributors, sync licensing, and remixers often ask for an instrumental, a clean (radio) edit, and stems. Offer to make them with `master_versions` once the main master is approved. Every version must have the same length and timing as the master, and the same mastering; `master_versions` does both. Stems stay at mix level, unlimited, so they add up to the mix. |

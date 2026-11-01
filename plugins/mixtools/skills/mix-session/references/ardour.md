@@ -28,7 +28,7 @@ Ardour identifies tracks by `id`, a string such as `"429"`. Get ids from `tracks
 
 Add a plugin with `plugin_add_by_plugin_id` (`id`, `pluginId`). It goes before the fader and returns its `pluginIndex`. Set a parameter with `plugin_set_parameter_by_index_value` (`id`, `pluginIndex`, `parameterIndex`, `value`). Bypass with `plugin_set_enabled`. Remove with `plugin_remove`.
 
-Use Ardour's built-in plugins. They are always installed.
+Use Ardour's built-in plugins and the Mixtools De-Esser. Never use plugins whose names start with "XT-": they are Harrison's commercial plugins, and this build has no license for them.
 
 ### ACE EQ — `lv2:urn:ardour:a-eq`
 
@@ -46,6 +46,20 @@ Six bands: a low shelf, four bell bands, and a high shelf.
 | 16 | Master Gain | -20 to +20 dB | 0 |
 
 For a narrow cut, use a bandwidth of about 0.5. For a gentle broad change, use 1 to 2.
+
+### Mixtools De-Esser — plugin ID from `mixtools_status`
+
+Turns down harsh "s", "sh", and "t" sounds only while they happen. Its ID changes when mixtools updates it, so read `deesser.plugin_id` from `mixtools_status` every time. If `mixtools_status` reports it missing, follow the `mixtools-setup` skill. Follow "Harsh s sounds" in SKILL.md; never add it any other way.
+
+| Index | Parameter | Range | Default |
+| --- | --- | --- | --- |
+| 0 | Frequency (split point; only sound above it is ever turned down) | 2000-12000 Hz | 5500 |
+| 1 | Threshold (the high part is turned down only while louder than this) | -60 to 0 dB | -24 |
+| 2 | Max reduction | 0-18 dB | 4 |
+| 3 | Listen (1 plays only the sound being removed) | 0 or 1 | 0 |
+| 4 | Reduction (output, read-only) | 0-18 dB | |
+
+The default threshold is only a placeholder. Always set parameters 0-2 from `vocal_sibilance`'s `plugin_parameters`. Whenever it is not reducing, its output equals its input, sample for sample. It changes nothing but the "s" sounds that cross the threshold.
 
 ### ACE High/Low Pass Filter — `lua:cbf2433c611d0849cbb198719a5ad05d2f69d24a`
 
@@ -92,6 +106,20 @@ A new bus or send is not covered by snapshots. Remove it with `track_remove_send
 
 `transport_play`, `transport_stop`, and `transport_locate_sample` (`sample`) move Ardour's own playhead. Use them when the person wants to hear Ardour's live mix. Use `audio_play` for before/after bounces.
 
+## One phrase louder or quieter
+
+Used only by "A note at one moment" in SKILL.md, with the `phrase` from `moment_check`.
+
+| Step | Tool | Arguments |
+| --- | --- | --- |
+| Find the region | `track_get_regions` | `id` (track). Each region has `regionId`, `startSample`, `endSample`. |
+| Split at the phrase start | `region_split` | `regionId` of the region covering `start_sample`, `sample`: `start_sample`. |
+| Split at the phrase end | `region_split` | `regionId` of the region now starting at `start_sample`, `sample`: `end_sample`. |
+| Change the phrase's level | `region_set_gain_db` | `regionId` of the region starting at `start_sample`, `db`. |
+| Take it back | `region_set_gain_db` | The same `regionId`, `db`: 0. |
+
+Region gain changes the level of the region only. It never changes the recording file.
+
 ## Undo
 
-`snapshot_save` and `snapshot_restore` are the undo for mixer settings. Ardour's own `session_undo` undoes editing operations such as region moves, not fader or plugin changes.
+`snapshot_save` and `snapshot_restore` are the undo for mixer settings. Ardour's own `session_undo` undoes editing operations such as region splits, not fader or plugin changes. Take back a phrase level change with `region_set_gain_db` and `db` 0 rather than `session_undo`, which undoes whatever Ardour did last.

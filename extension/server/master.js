@@ -21,6 +21,29 @@ const CLICK_DB = -40;
 const CUT_OFF_DB = -20;
 const MAX_EXTRA_GAIN_DB = 12;
 
+/**
+ * How many dB a streaming service turns a song up or down, from its integrated
+ * loudness and true peak. Spotify (Normal) plays at -14 LUFS and turns quiet
+ * songs up only until their peaks reach -1 dBTP. YouTube, Tidal, and Amazon
+ * play at -14 LUFS and only turn loud songs down. Apple Music's Sound Check
+ * plays at about -16 LUFS; turning down is the only part it documents.
+ */
+export const STREAMING_SERVICES = ["spotify", "youtube", "tidal", "amazon", "apple_music"];
+export function streamingGain(service, lufs, truePeakDb) {
+  switch (service) {
+    case "spotify":
+      return lufs > -14 ? -14 - lufs : Math.max(0, Math.min(-14 - lufs, -1 - truePeakDb));
+    case "youtube":
+    case "tidal":
+    case "amazon":
+      return Math.min(0, -14 - lufs);
+    case "apple_music":
+      return Math.min(0, -16 - lufs);
+    default:
+      throw new Error(`Unknown service "${service}". Use one of: ${STREAMING_SERVICES.join(", ")}.`);
+  }
+}
+
 /** Ceiling the release targets call for: -1 dBTP, or -2 dBTP above -14 LUFS. */
 export const defaultCeiling = (lufs) => (lufs > -14 ? -2 : -1);
 
@@ -140,7 +163,29 @@ function limitToTarget(channels, sr, targetLufs, ceilingDb) {
     if (tp <= ceiling * 1.0001) break;
     limitAt *= (ceiling / tp) * 0.999;
   }
-  return { out, g: buf.g, gainDb, startLufs, lufs };
+  return { out, g: buf.g, gainDb, startLufs, lufs, limitAt };
+}
+
+/**
+ * Apply a master's exact gain and limiter to another version of its mix. The
+ * limiter only acts where this version's own peaks need it, so a version with
+ * less in it is never pushed louder to make up.
+ */
+function limitWithGain(channels, sr, gainDb, limitAt, ceilingDb) {
+  const ceiling = fromDb(ceilingDb);
+  const env = peakEnvelope(channels);
+  const n = env.length;
+  const buf = { need: new Float32Array(n), held: new Float32Array(n), q: new Int32Array(n), g: new Float32Array(n) };
+  const out = channels.map(() => new Float32Array(n));
+  let at = limitAt;
+  for (let pass = 0; pass < 3; pass++) {
+    limiterGain(env, fromDb(gainDb), at, sr, buf);
+    applyGain(channels, fromDb(gainDb), buf.g, out);
+    const tp = Math.max(...out.map(truePeak));
+    if (tp <= ceiling * 1.0001) break;
+    at *= (ceiling / tp) * 0.999;
+  }
+  return { out, g: buf.g };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,30 +225,41 @@ function trimAndFade(channels, sr, { trim, fadeSeconds }) {
       end = Math.min(n, last + Math.round(0.1 * sr));
     }
   }
-  const cut = channels.map((ch) => ch.slice(start, end));
+  const cut = channels.map((ch) => ch.subarray(start, end));
   const len = end - start;
 
   // Fade in across the kept pre-roll, which is all below -60 dBFS, so the file
   // starts from silence. A mix that starts mid-sound gets a 2 ms fade instead.
   let fadeIn = trim ? Math.max(0, firstAbove(cut, silence)) : 0;
   if (fadeIn === 0 && maxAbs(cut, 0, 1) > fromDb(CLICK_DB)) fadeIn = Math.round(0.002 * sr);
-  for (const ch of cut) for (let i = 0; i < fadeIn; i++) ch[i] *= i / fadeIn;
 
-  let fade = 0;
+  let fadeFrom = len;
   if (fadeSeconds > 0) {
     const ringOutFrom = lastAbove(cut, fromDb(RING_OUT_DB)) + 1;
     // A mix that is still sounding at the very end gets a 10 ms fade, enough
     // to stop a click.
-    const fadeFrom = Math.min(Math.max(len - Math.round(fadeSeconds * sr), ringOutFrom, 0), len - Math.round(0.01 * sr));
-    fade = len - fadeFrom;
-    for (const ch of cut) {
-      for (let i = fadeFrom; i < len; i++) {
-        const t = (len - 1 - i) / Math.max(1, fade - 1);
-        ch[i] *= t * t; // eases out instead of stopping at a corner
-      }
-    }
+    fadeFrom = Math.min(Math.max(len - Math.round(fadeSeconds * sr), ringOutFrom, 0), len - Math.round(0.01 * sr));
   }
-  return { channels: cut, trimmedStart: start / sr, trimmedEnd: (n - end) / sr, fadeSeconds: fade / sr };
+  const edges = { frames: n, start, end, fade_in: fadeIn, fade_out_from: fadeFrom };
+  return { channels: applyEdges(channels, edges), edges, trimmedStart: start / sr, trimmedEnd: (n - end) / sr, fadeSeconds: (len - fadeFrom) / sr };
+}
+
+/**
+ * Cut and fade audio exactly as a master was cut and faded, so other versions
+ * line up with it sample for sample.
+ */
+function applyEdges(channels, { start, end, fade_in: fadeIn, fade_out_from: fadeFrom }) {
+  const len = end - start;
+  const fade = len - fadeFrom;
+  return channels.map((ch) => {
+    const out = ch.slice(start, end);
+    for (let i = 0; i < fadeIn; i++) out[i] *= i / fadeIn;
+    for (let i = fadeFrom; i < len; i++) {
+      const t = (len - 1 - i) / Math.max(1, fade - 1);
+      out[i] *= t * t; // eases out instead of stopping at a corner
+    }
+    return out;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +326,66 @@ function songFor(source, bouncesDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Master settings: how each master was made, so its other versions can be made
+// the same way. Kept in a hidden file beside the masters.
+
+const SETTINGS_FILE = ".mixtools-masters.json";
+
+async function readSettingsFile(dir) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(dir, SETTINGS_FILE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function recordSettings(file, settings) {
+  const dir = path.dirname(file);
+  const all = await readSettingsFile(dir);
+  all[path.basename(file)] = settings;
+  await fs.writeFile(path.join(dir, SETTINGS_FILE), JSON.stringify(all, null, 2));
+}
+
+export async function masterSettings(file) {
+  await mustExist(file, "master");
+  const s = (await readSettingsFile(path.dirname(path.resolve(file))))[path.basename(file)];
+  if (!s) throw new Error(`${path.basename(file)} was made before mixtools kept master settings, or not by master_render. Render the master again with master_render, then make the versions from the new one.`);
+  return s;
+}
+
+/**
+ * Master another version of a master's mix (an instrumental, a clean edit)
+ * with the master's exact gain, limiter, trim, and fades, or, for a stem,
+ * only its trim and fades. Writes a WAV beside the master, or in `dir`.
+ */
+export async function renderVersion(masterFile, versionMix, { label, stem = false, dir = null }) {
+  const s = await masterSettings(masterFile);
+  const audio = await loadAudio(versionMix);
+  if (audio.sampleRate !== s.sample_rate) throw new Error(`${path.basename(versionMix)} is at ${audio.sampleRate} Hz; the master's mix was at ${s.sample_rate} Hz.`);
+  if (audio.channels[0].length !== s.edges.frames) {
+    throw new Error(`${path.basename(versionMix)} is ${audio.channels[0].length} samples long; the master's mix was ${s.edges.frames}. The song's length changed since the master was made.`);
+  }
+  if (audio.channels.length === 1) audio.channels = [audio.channels[0], audio.channels[0]];
+  let channels = audio.channels;
+  let stats = null;
+  if (!stem) {
+    const limited = limitWithGain(channels, audio.sampleRate, s.gain_db, s.limit_at, s.ceiling_dbtp);
+    channels = limited.out;
+    stats = limiterStats(limited.g);
+  }
+  channels = applyEdges(channels, s.edges);
+  const masterDir = path.dirname(path.resolve(masterFile));
+  const song = path.basename(masterDir);
+  const outDir = dir ?? masterDir;
+  await fs.mkdir(outDir, { recursive: true });
+  // A version made again from the same master replaces the earlier file:
+  // master_versions only runs when the mix still matches the master's.
+  const file = path.join(outDir, `${stem ? `${song} stem - ${safeName(label)}` : `${song} (${s.label}, ${safeName(label)})`}.wav`);
+  await fs.writeFile(file, encodeWavPcm({ sampleRate: audio.sampleRate, channels }, s.bit_depth));
+  return { file, limiter: stats };
+}
+
+// ---------------------------------------------------------------------------
 // master_render
 
 export async function renderMaster(opts, { mastersDir, bouncesDir }) {
@@ -294,6 +410,16 @@ export async function renderMaster(opts, { mastersDir, bouncesDir }) {
   const label = safeName(opts.label || `master ${round(target)} LUFS`);
   const file = await freePath(dir, `${song} (${label})`);
   await fs.writeFile(file, encodeWavPcm({ sampleRate: sr, channels: shaped.channels }, bits));
+  await recordSettings(file, {
+    source: path.resolve(source),
+    label,
+    sample_rate: sr,
+    gain_db: limited.gainDb,
+    limit_at: limited.limitAt,
+    ceiling_dbtp: ceilingDb,
+    bit_depth: bits,
+    edges: shaped.edges,
+  });
 
   const after = await measure(file);
   const stats = limiterStats(limited.g);
@@ -506,7 +632,6 @@ export async function releaseCheck(opts, { referencesDir, audioExts }) {
     add("dynamics vs references", "skipped", `range ${m.loudness_range_lu} LU, crest ${m.crest_factor_db} dB`, "no references", "Add reference songs to compare punch and loudness range.");
   }
 
-  const spotifyUp = Math.min(-14 - L, -1 - tp);
   const fails = checks.filter((c) => c.status === "fail");
   const warns = checks.filter((c) => c.status === "warn");
   return {
@@ -519,9 +644,9 @@ export async function releaseCheck(opts, { referencesDir, audioExts }) {
         : "Ready to upload.",
     checks,
     streaming_playback_change_db: {
-      spotify: round(L > -14 ? -14 - L : Math.max(0, spotifyUp)),
-      youtube_tidal_amazon: round(Math.min(0, -14 - L)),
-      apple_music_approx: round(Math.min(0, -16 - L)),
+      spotify: round(streamingGain("spotify", L, tp)),
+      youtube_tidal_amazon: round(streamingGain("youtube", L, tp)),
+      apple_music_approx: round(streamingGain("apple_music", L, tp)),
       note: "Negative numbers mean the service plays the song that much quieter than the file.",
     },
     references: refMeasures,

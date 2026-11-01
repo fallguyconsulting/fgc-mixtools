@@ -338,6 +338,165 @@ export async function bounce(label, stemTracks = []) {
 }
 
 // ---------------------------------------------------------------------------
+// Variants: the mix with some tracks muted, only some tracks playing, or
+// stretches of some tracks silenced. Everything is put back afterwards.
+
+async function setMute(id, value) {
+  await call("track_set_mute", { id, value });
+  const until = Date.now() + 5000;
+  while (Date.now() < until) {
+    if (!!(await call("track_get_info", { id })).mute === value) return;
+    await sleep(50);
+  }
+  throw new Error(`Ardour did not ${value ? "mute" : "unmute"} track ${id} within 5 seconds.`);
+}
+
+const regionLayout = async (id) =>
+  (await call("track_get_regions", { id })).regions.map((r) => `${r.regionId}:${r.startSample}-${r.endSample}`).join(",");
+
+/**
+ * Silence [start, end) samples on one track: split the regions there and set
+ * the piece's gain to zero. Returns the number of undoable steps taken.
+ */
+async function silenceStretch(id, start, end) {
+  let steps = 0;
+  const regions = async () => (await call("track_get_regions", { id })).regions;
+  for (const r of await regions()) {
+    if (r.endSample <= start || r.startSample >= end) continue;
+    if (r.startSample < start) {
+      await call("region_split", { regionId: r.regionId, sample: start });
+      steps++;
+    }
+  }
+  for (const r of await regions()) {
+    if (r.startSample < start || r.startSample >= end) continue;
+    if (r.endSample > end) {
+      await call("region_split", { regionId: r.regionId, sample: end });
+      steps++;
+    }
+  }
+  for (const r of await regions()) {
+    if (r.startSample >= start && r.endSample <= end) {
+      await call("region_set_gain_linear", { regionId: r.regionId, linear: 0 });
+      steps++;
+    }
+  }
+  return steps;
+}
+
+/**
+ * Render the mix as a variant. `mute` lists track ids to mute; `only` lists
+ * track ids to solo; `silence` lists { id, start, end } sample stretches to
+ * silence. Mutes and solos go back to how they were, and region edits are
+ * undone, even if rendering fails.
+ */
+export async function renderVariant(label, { mute = [], only = null, silence = [] } = {}) {
+  const info = await sessionInfo();
+  const { dir, base } = await nextBouncePath(info.sessionName, label);
+  const all = await tracks();
+  const state = [];
+  for (const t of all) {
+    const i = await call("track_get_info", { id: t.id });
+    state.push({ id: t.id, mute: !!i.mute, solo: !!i.solo });
+  }
+  const layouts = {};
+  for (const s of silence) layouts[s.id] ??= await regionLayout(s.id);
+
+  let steps = 0;
+  try {
+    for (const s of silence) steps += await silenceStretch(s.id, s.start, s.end);
+    for (const id of mute) await setMute(id, true);
+    if (only) {
+      for (const s of state) if (s.solo && !only.includes(s.id)) await setSolo(s.id, false);
+      for (const id of only) await setSolo(id, true);
+    }
+    return await exportSession(info, path.join(dir, `${base}.wav`));
+  } finally {
+    for (const s of state) {
+      const now = await call("track_get_info", { id: s.id });
+      if (!!now.solo !== s.solo) await setSolo(s.id, s.solo);
+      if (!!now.mute !== s.mute) await setMute(s.id, s.mute);
+    }
+    if (steps) {
+      await call("session_undo", { count: steps });
+      for (const [id, before] of Object.entries(layouts)) {
+        if ((await regionLayout(id)) !== before) {
+          throw new Error(`Undoing the silenced stretches did not put track ${id}'s regions back as they were. Check it in Ardour's Editor window, and use Edit, then Undo, if needed.`);
+        }
+      }
+    }
+    await call("session_save");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Markers
+
+/** Where the session range starts. A bounce's time 0 is this sample. */
+export async function sessionStartSample() {
+  const { markers = [] } = await call("markers_list");
+  const start = markers.find((m) => m.source === "session_range_boundary" && m.boundary === "start");
+  return start?.startSample ?? 0;
+}
+
+/**
+ * Move the playhead and wait until Ardour reports it there. A busy Ardour can
+ * drop a locate request, so ask again each second.
+ */
+async function locate(sample, tries = 5) {
+  for (let k = 0; k < tries; k++) {
+    await call("transport_locate_sample", { sample });
+    const until = Date.now() + 1000;
+    while (Date.now() < until) {
+      const st = await call("transport_get_state");
+      if (!st.rolling && Math.abs(st.sample - sample) <= 1) return;
+      await sleep(50);
+    }
+  }
+  throw new Error(`Ardour's playhead did not move to sample ${sample}. If Ardour is showing a window, ask the person to close it, then try again.`);
+}
+
+/**
+ * Stop playback and return where the playhead settles. Ardour keeps moving
+ * for a moment after a stop, so wait for two equal readings.
+ */
+export async function stopAndReadPlayhead(timeoutMs = 3000) {
+  if ((await call("transport_get_state")).rolling) await call("transport_stop");
+  const until = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < until) {
+    const st = await call("transport_get_state");
+    if (!st.rolling && last != null && st.sample === last) return st.sample;
+    last = st.rolling ? null : st.sample;
+    await sleep(100);
+  }
+  throw new Error("Ardour's playhead did not settle after stopping.");
+}
+
+/**
+ * Add a marker at an exact sample. Ardour adds markers only at the playhead or
+ * a bar and beat, so stop, move the playhead there, and add it. The playhead
+ * stays at the marker, so pressing play in Ardour starts there.
+ */
+export async function addMarkerAt(sample, name) {
+  if ((await call("transport_get_state")).rolling) await call("transport_stop");
+  await locate(sample);
+  await call("markers_add", { name });
+  const { markers = [] } = await call("markers_list");
+  const mine = markers
+    .filter((m) => m.isMark && m.name === name)
+    .sort((x, y) => Math.abs(x.startSample - sample) - Math.abs(y.startSample - sample))[0];
+  if (!mine) throw new Error(`Ardour did not add the marker "${name}".`);
+  // After playback stops, Ardour adds markers at its audible position, a few
+  // samples from the playhead. Anything within about a millisecond is exact
+  // enough to hear.
+  if (Math.abs(mine.startSample - sample) > 64) {
+    throw new Error(`Ardour put the marker "${name}" at sample ${mine.startSample}, not ${sample}.`);
+  }
+  return { location_id: mine.locationId, sample: mine.startSample, bar_beat: mine.bbt?.text ?? null };
+}
+
+// ---------------------------------------------------------------------------
 // Snapshots (Ardour mixer scenes, labelled in a file beside the session)
 
 const snapshotFile = (info) => path.join(info.path, "mixtools-snapshots.json");

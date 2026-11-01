@@ -23,7 +23,7 @@ Measure with `audio_measure` (band energies, loudness, peaks, stereo) and `audio
 | thin, weak, small, no body | `bass` and `low_mid` lower than the reference | Raise 100–250 Hz on the bass, kick, or main instrument by 1–3 dB. Check that a low cut is not set too high. |
 | boxy, cardboard, honky, nasal | `low_mid` or `mid` peak in a narrow range | Find the peak with `audio_spectrogram` or stem measurements. Cut 2–3 dB with a narrow EQ band around 300–1000 Hz on the offending track. |
 | harsh, shrill, piercing, hurts my ears, tiring | `high_mid` higher than the reference | Cut 1–3 dB around 2–5 kHz on the loudest bright tracks (vocals, guitars, cymbals). |
-| hissy "s" sounds, spitty vocal | `presence` and `brilliance` spikes on the vocal stem; bright vertical streaks in `audio_spectrogram` | Cut 2–4 dB with a narrow ACE EQ bell (bandwidth about 0.5) at the frequency of the streaks, usually 5–8 kHz, on the vocal. Ardour has no built-in de-esser. |
+| hissy "s" sounds, spitty vocal, "s" sounds hurt | `vocal_sibilance` on the vocal stem: loud `loudest_s_sounds`; bright vertical streaks in `audio_spectrogram` | Follow "Harsh s sounds" in SKILL.md: the Mixtools De-Esser, set so it touches only the "s" sounds the person points to. Never an EQ cut on the vocal; that dulls every word. |
 | dull, dark, muffled, lifeless, under a blanket | `presence` and `brilliance` lower than the reference | Raise ACE EQ's high shelf (Gain H) 1–2 dB at about 8–10 kHz on the vocal or the main instrument. |
 
 ## Balance
@@ -35,6 +35,7 @@ Measure with `audio_measure` (band energies, loudness, peaks, stereo) and `audio
 | kick and bass are fighting, low end is a blur | `bass` and `sub` crowded; kick and bass stems peak in the same range | Cut a narrow slice in the bass where the kick peaks, or the reverse. Lower whichever one the person cares less about. |
 | drums have no punch | Drum stem peaks are flat; mix crest factor low | Raise the kick or snare 1–2 dB. If a compressor is on the drums, slow its attack so the hit gets through. |
 | a part is too loud or too quiet | Stem loudness | Change that track's volume by 1–2 dB. |
+| a part disappears or jumps out at one spot ("at 1:23", "in the bridge") | `moment_check` at that time: `change_against_rest_db` per track | Follow "A note at one moment" in SKILL.md: change only that phrase's level, preferably on the part that got louder. |
 | too much echo, washed out, far away | Reverb and delay send levels | Lower the reverb or delay sends 2–4 dB. |
 | too dry, in a closet | Reverb and delay send levels | Raise an existing reverb send 1–3 dB. |
 
@@ -53,5 +54,5 @@ Measure with `audio_measure` (band energies, loudness, peaks, stereo) and `audio
 | --- | --- | --- |
 | narrow, everything in the middle, small | Stereo width low; correlation near +1 | Pan supporting parts (guitars, keys, backing vocals) left and right. Keep kick, bass, snare, and lead vocal in the center. |
 | too wide, hollow, weird on headphones | Correlation near 0 or below | Pull extreme pans in. Check stereo-widening plugins. |
-| sounds bad on a phone or laptop speaker | Mono compatibility warning; low `mid` and `high_mid` on the bass stem | Fix mono problems first. Phones play little bass, so a bass that has no upper harmonics disappears. Raise 700 Hz–1.5 kHz on the bass slightly. |
-| sounds bad in the car | `bass` and `sub` higher than the reference | Lower the low end 1–2 dB. |
+| sounds bad on a phone or laptop speaker | Mono compatibility warning; low `mid` and `high_mid` on the bass stem; listen with `audio_play` `simulate` `phone` | Fix mono problems first. Phones play little bass, so a bass that has no upper harmonics disappears. Raise 700 Hz–1.5 kHz on the bass slightly. |
+| sounds bad in the car | `bass` and `sub` higher than the reference; listen with `audio_play` `simulate` `car` next to a reference | Lower the low end 1–2 dB. If quiet parts vanish under the road rumble, raise them or compress them lightly. |

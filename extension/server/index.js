@@ -10,7 +10,15 @@ import readline from "node:readline";
 
 import * as ardour from "./ardour.js";
 import { compare, encodeWavFloat, loadAudio, measure } from "./audio.js";
+import * as journal from "./journal.js";
 import { releaseCheck, renderMaster } from "./master.js";
+import { deesserStatus, installDeesser, sibilance } from "./vocal.js";
+import { archiveSong, BOUNCE_CHOICES } from "./archive.js";
+import { ROLE_LEVELS, startingBalance } from "./balance.js";
+import { makeVersions, VERSIONS } from "./versions.js";
+import { formatTime, momentCheck, parseTime } from "./moment.js";
+import { preparePlayback, SIMULATIONS } from "./playback.js";
+import { STREAMING_SERVICES } from "./master.js";
 import { SPECTROGRAM_GRID_HZ, spectrogram } from "./spectrogram.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version;
@@ -34,7 +42,7 @@ const TOOLS = [
   {
     name: "mixtools_setup",
     description:
-      "Create the workspace folders (~/Music/Mixtools: Songs, References, Bounces, Masters) and turn on Ardour's MCP server in Ardour's settings. Turning the server on only works while Ardour is closed. Safe to run again.",
+      "Create the workspace folders (~/Music/Mixtools: Songs, References, Bounces, Masters), install the Mixtools De-Esser plugin for Ardour, and turn on Ardour's MCP server in Ardour's settings. Turning the server on only works while Ardour is closed, and Ardour finds a newly installed plugin only when it next starts. Safe to run again.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -85,6 +93,28 @@ const TOOLS = [
         arguments: { type: "object", description: "Arguments for the Ardour tool." },
       },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "mix_starting_balance",
+    description:
+      "Set first-pass faders on a freshly imported song so no track starts buried or clipping, before the person gives notes. Saves a snapshot, bounces every track alone, measures how loud each plays, guesses each track's role from its name (lead vocal, drums, bass, guitar, pad, and so on), sets each fader to its role's starting level against the lead, and moves all faders together so the mix peaks near -6 dBFS. A track too quiet for the fader's +6 dB gets the rest as clip gain. Bounces 'raw levels' before and 'starting balance' after. Refuses if faders were already moved, unless replace_current_levels is true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        roles: {
+          type: "object",
+          additionalProperties: { type: "string", enum: Object.keys(ROLE_LEVELS) },
+          description: `Role per track name, for tracks whose names do not say what they are, for example {"Audio 3": "guitar"}. Roles: ${Object.keys(ROLE_LEVELS).join(", ")}.`,
+        },
+        levels: {
+          type: "object",
+          additionalProperties: { type: "number", minimum: -30, maximum: 6 },
+          description: "Starting level per track name in dB against the lead, overriding its role's level, for example {\"Piano\": -3} when the piano carries the song.",
+        },
+        replace_current_levels: { type: "boolean", description: "Replace faders that were already moved. Only when the person wants to start the balance over." },
+      },
       additionalProperties: false,
     },
   },
@@ -149,8 +179,21 @@ const TOOLS = [
   },
   {
     name: "audio_play",
-    description: "Play an audio file through the Mac's speakers or headphones. Stops anything mixtools is already playing.",
-    inputSchema: { type: "object", properties: { path: { type: "string" }, ...range }, required: ["path"], additionalProperties: false },
+    description:
+      "Play an audio file, or start to end seconds of it, through the Mac's speakers or headphones. Stops anything mixtools is already playing. Optionally sets the level a listener hears, from the whole file's loudness: match_with plays it at the same loudness as other files, so the louder one does not win a comparison just by being louder; as_heard_on plays it as a streaming service would; level_lufs plays it at an exact loudness. Use only one of those three. simulate plays it as heard on a phone, in a car, or in mono. Never changes the file.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        ...range,
+        match_with: { type: "array", items: { type: "string" }, description: "Other files in the comparison. Every file plays at the quietest one's loudness. Pass the same list (in any order) when playing each file." },
+        as_heard_on: { type: "string", enum: STREAMING_SERVICES, description: "Play at the level this streaming service would." },
+        level_lufs: { type: "number", minimum: -40, maximum: 0, description: "Play at this integrated loudness." },
+        simulate: { type: "string", enum: SIMULATIONS, description: "phone: one small speaker, no bass. car: boomy bass, soft highs, road rumble. mono: left and right summed." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
   },
   {
     name: "audio_stop",
@@ -178,6 +221,53 @@ const TOOLS = [
     },
   },
   {
+    name: "master_versions",
+    description:
+      "Make alternate versions of an approved master: instrumental (every vocal track muted), tv_mix (lead vocal muted, backing vocals kept), a_cappella (only the vocal tracks), clean (stretches of the vocal tracks silenced, for a radio edit), and stems (groups of tracks alone: drums, bass, music, lead vocal, backing vocals). Ardour renders each version from the mix with only that change, then each is mastered with the master's exact gain, limiter, trim, and fades, so it lines up with the master sample for sample. Stems stay at mix level, without the limiter, so they add up to the mix. Ardour must have the song open with the same mix the master was made from; the tool checks that first. Every mute, solo, and region edit is put back afterwards. Writes beside the master, stems in a Stems folder. Making a version again replaces the earlier file of that version.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        master: { type: "string", description: "The approved master, made by master_render." },
+        versions: { type: "array", items: { type: "string", enum: VERSIONS }, description: "Which versions to make. Default: instrumental and stems." },
+        vocal_tracks: { type: "array", items: { type: "string" }, description: "Every vocal track (lead and backing). Default: tracks whose names say vocal, vox, backing, harmony, and so on." },
+        lead_tracks: { type: "array", items: { type: "string" }, description: "The lead vocal tracks, muted for tv_mix. Default: the vocal tracks that are not backing vocals." },
+        clean_spans: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              start: { type: ["number", "string"], description: "Seconds or \"1:23.4\"." },
+              end: { type: ["number", "string"], description: "Seconds or \"1:23.9\"." },
+            },
+            required: ["start", "end"],
+            additionalProperties: false,
+          },
+          description: "For clean: each word or phrase to silence on the vocal tracks, as song times. Each up to 5 seconds.",
+        },
+        stem_groups: {
+          type: "object",
+          additionalProperties: { type: "array", items: { type: "string" } },
+          description: "Stem name to track names, for example {\"Drums\": [\"Kick\", \"Snare\"], \"Keys\": [\"Piano\"]}. Default: groups by track role.",
+        },
+      },
+      required: ["master"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "song_archive",
+    description:
+      "Zip a song into ~/Music/Mixtools/Archives for backup or to hand it to someone: the Ardour session with all its recordings, the masters, versions, and stems, the final mix bounce (or all bounces, or none), the mix notes, and a read-me on how to reopen it. Saves the song first if Ardour has it open. Checks the zip after writing it. Never changes or deletes the song.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        song: { type: "string", description: "Song name or folder. Default: the song open in Ardour." },
+        bounces: { type: "string", enum: BOUNCE_CHOICES, description: "final (default): the latest 'final mix' bounce and its stems. all: every bounce. none." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "release_check",
     description:
       "Check whether an audio file is ready to send to a distributor for streaming: file format, sample rate, channels, loudness, true peak, clipping, peaks after a 256 kbps AAC encode, silence and clicks at the start and end, mono, and punch and loudness range against reference songs. Returns pass, warn, fail, or skipped per check with a plain-words note, a verdict, and how much each streaming service turns the song up or down.",
@@ -190,6 +280,80 @@ const TOOLS = [
         references: { type: "array", items: { type: "string" }, description: "Reference songs to compare punch and loudness range with. Default: every song in the References folder. An empty list skips the comparison." },
       },
       required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "vocal_sibilance",
+    description:
+      "Find the \"s\", \"sh\", and \"t\" sounds in a vocal stem and predict exactly what the Mixtools De-Esser would do to each one at given settings, without changing anything. Returns how many s sounds there are, how many the settings touch and by how much, the loudest ones with their times, listening windows around the most-reduced ones, and how much non-s sound the settings would also turn down (which dulls a voice). Without threshold_db, suggests a threshold that touches only the loudest quarter of the s sounds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "A vocal stem bounce (bounce with stems)." },
+        frequency: { type: "number", minimum: 2000, maximum: 12000, description: "Split frequency in Hz. Default 5500. Higher touches only the hissiest part." },
+        threshold_db: { type: "number", minimum: -60, maximum: 0, description: "Threshold in dB. Default: the suggested threshold." },
+        max_reduction_db: { type: "number", minimum: 0, maximum: 18, description: "Most reduction in dB. Default 4." },
+        ...range,
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "moment_mark",
+    description:
+      "Record a note the person gives at a time in the song, such as \"at 1:23 the vocal disappears\": add an Ardour marker named with the time and their words, move Ardour's playhead there (stopping playback), and log the note in the mix notes. Times are song times, as in a bounce, where 0:00 is the start of the session. Without a time, marks where Ardour's playhead is, so the person can stop playback at the spot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        time: { type: ["number", "string"], description: "Seconds (83) or minutes:seconds (\"1:23\"). Default: where Ardour's playhead is." },
+        note: { type: "string", description: "The person's words, short, for example 'vocal disappears'." },
+      },
+      required: ["note"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "moment_check",
+    description:
+      "Measure one moment of a mix bounce against the whole song, without changing anything. Uses the stems bounced with it (bounce with stems of the tracks involved first). For each track: whether it plays there, how loud it is there against its usual level, and how much higher or lower it sits against the rest of the mix than usual, which shows a part getting buried or jumping out. Also the phrase around the moment (from the silent gap before it to the one after, safe points to split a region), the mix's tone there against the whole song, peaks and clipping there, findings in plain words, a play_window for audio_play, and Ardour sample positions when the bounce belongs to the open song.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "A mix bounce (not a stem)." },
+        time: { type: ["number", "string"], description: "Seconds (83) or minutes:seconds (\"1:23\")." },
+        window_seconds: { type: "number", minimum: 1, maximum: 10, description: "How much audio around the time to measure. Default 3." },
+        stems: { type: "array", items: { type: "string" }, description: "Stem files to use. Default: the stems bounced with this mix." },
+      },
+      required: ["path", "time"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "journal_read",
+    description:
+      "Read a song's mix notes (Mix notes.md in the song folder): what the person wants (goals, references, loudness target, likes and dislikes) and a dated log of complaints, changes, bounces, snapshots, masters, and decisions. Also returns the song's snapshots, latest bounces, and masters. With no song and no song open in Ardour, lists every song with its latest note instead. Call at the start of every conversation about a song.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        song: { type: "string", description: "Song name or folder. Default: the song open in Ardour." },
+        entries: { type: "integer", minimum: 1, maximum: 500, description: "How many of the latest log lines to return. Default 30." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "journal_write",
+    description:
+      "Write to a song's mix notes. 'log' adds one dated line: the person's complaint in their words, what you changed, and what they chose. 'about' replaces the About section: the person's goals, references, agreed loudness target, likes and dislikes, and open issues. Bounces, snapshots, restores, masters, and release checks are logged automatically, so log the reasons, not the file names.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        log: { type: "string", description: "One line for the log." },
+        about: { type: "string", description: "The full new About section, as short Markdown bullet lines. Include everything still true; it replaces the old text." },
+        song: { type: "string", description: "Song name or folder. Default: the song open in Ardour." },
+      },
       additionalProperties: false,
     },
   },
@@ -223,6 +387,7 @@ async function status() {
     importTool = (await ardour.listTools()).some((t) => t.name === "session_import_audio");
   } catch {}
   const enabled = await ardour.mcpEnabledInConfig();
+  const deesser = await deesserStatus();
   const folders = {};
   for (const [k, p] of Object.entries({ songs: ardour.SONGS, references: ardour.REFERENCES, bounces: ardour.BOUNCES, masters: ardour.MASTERS })) {
     folders[k] = { path: p, exists: await exists(p) };
@@ -233,6 +398,12 @@ async function status() {
   if (version && enabled === false && !mcp) problems.push({ problem: "Ardour's MCP server is off.", fix: running ? "Ask the person to quit Ardour, then call mixtools_setup." : "Call mixtools_setup." });
   if (running && !mcp && enabled) problems.push({ problem: "Ardour is open but its MCP server is not answering.", fix: "If Ardour is still starting or showing a window, ask the person to finish it. If no song is open, call song_open or song_new." });
   if (mcp && !importTool) problems.push({ problem: "This Ardour cannot import audio for mixtools.", fix: "Install the Ardour build that came with mixtools; the standard Ardour download lacks the import tool." });
+  if (version && enabled !== null && !deesser.current) {
+    problems.push({
+      problem: deesser.installed ? "The Mixtools De-Esser in Ardour is out of date." : "The Mixtools De-Esser is not installed in Ardour.",
+      fix: `Call mixtools_setup.${running ? " Then ask the person to save and quit Ardour and open the song again, because Ardour finds plugins only when it starts." : ""}`,
+    });
+  }
   // master_render creates Masters on first use, so only the others count.
   if ([folders.songs, folders.references, folders.bounces].some((f) => !f.exists)) problems.push({ problem: "Workspace folders are missing.", fix: "Call mixtools_setup." });
 
@@ -241,6 +412,7 @@ async function status() {
     ardour: { installed: !!version, version, open: running, mcp_server_on_in_settings: enabled, mcp_connected: mcp, import_supported: importTool },
     song: session ? { name: session.sessionName, path: session.path, unsaved_changes: session.dirty, sample_rate: session.sampleRate } : null,
     workspace: folders,
+    deesser: { name: "Mixtools De-Esser", installed: deesser.installed, up_to_date: deesser.current, plugin_id: deesser.plugin_id },
     problems,
   };
 }
@@ -253,25 +425,31 @@ async function setup() {
       created.push(p);
     }
   }
-  const mcp = (await ardour.mcpEnabledInConfig()) ? { changed: false, reason: "already on" } : await ardour.enableMcpInConfig();
-  return { created_folders: created, ardour_mcp_server: mcp, status: await status() };
+  const enabled = await ardour.mcpEnabledInConfig();
+  const mcp = enabled ? { changed: false, reason: "already on" } : await ardour.enableMcpInConfig();
+  // Ardour decides it is running for the first time by its settings, so
+  // install nothing into its settings folder before it has run once.
+  const deesser = enabled === null ? { changed: false, reason: "Ardour has not been opened yet." } : await installDeesser();
+  return { created_folders: created, ardour_mcp_server: mcp, deesser, status: await status() };
 }
 
 let player = null;
 let tempClip = null;
 
-async function play(file, start, end) {
+async function play(file, opts) {
+  const { start, end } = opts;
   await stopPlayback();
+  const prepared = await preparePlayback(file, opts);
   let target = file;
-  if (start != null || end != null) {
-    const audio = await loadAudio(file, { start, end });
+  if (prepared || start != null || end != null) {
+    const audio = prepared?.audio ?? (await loadAudio(file, { start, end }));
     tempClip = path.join(os.tmpdir(), `mixtools-clip-${process.pid}.wav`);
     await fs.writeFile(tempClip, encodeWavFloat(audio));
     target = tempClip;
   }
   player = spawn("/usr/bin/afplay", [target], { stdio: "ignore" });
   player.on("exit", () => (player = null));
-  return { playing: path.basename(file), start: start ?? 0, end: end ?? null };
+  return { playing: path.basename(file), start: start ?? 0, end: end ?? null, ...(prepared ? { level: prepared.info } : {}) };
 }
 
 async function stopPlayback() {
@@ -314,17 +492,161 @@ async function ardourTools({ filter, name }) {
   return tools.filter((t) => !f || t.name.includes(f)).map((t) => ({ name: t.name, description: t.description }));
 }
 
+// ---------------------------------------------------------------------------
+// Journal
+
+/** The song folder for a name or path, or the song open in Ardour. Null if neither. */
+async function songDir(song) {
+  if (song) {
+    let p = song.endsWith(".ardour") ? path.dirname(song) : song;
+    if (path.isAbsolute(p) && (await exists(p))) return p;
+    const match = (await ardour.listSongs()).find((x) => x.song.toLowerCase() === String(song).toLowerCase());
+    if (match) return match.path;
+    throw new Error(`No song named "${song}". Call journal_read with no song to list them.`);
+  }
+  try {
+    return (await ardour.sessionInfo()).path.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/** The song folder that a file in Bounces/<song>/ or Masters/<song>/ belongs to. */
+async function songDirForFile(file) {
+  const parent = path.dirname(path.resolve(file));
+  const root = path.dirname(parent);
+  if (root === ardour.BOUNCES || root === ardour.MASTERS) {
+    const dir = path.join(ardour.SONGS, path.basename(parent));
+    if (await exists(dir)) return dir;
+  }
+  return songDir();
+}
+
+/** Log to the journal without ever failing the tool that triggered it. */
+async function autoLog(dirPromise, text) {
+  try {
+    const dir = await dirPromise;
+    if (dir) await journal.append(dir, text);
+  } catch {}
+}
+
+async function listFiles(dir, keep) {
+  try {
+    return (await fs.readdir(dir)).filter(keep).sort();
+  } catch {
+    return [];
+  }
+}
+
+async function journalRead({ song, entries }) {
+  const dir = await songDir(song);
+  if (!dir) {
+    const songs = [];
+    for (const s of await ardour.listSongs()) songs.push({ ...s, latest_note: await journal.lastEntry(s.path) });
+    return { open_song: null, note: "No song is open in Ardour. Ask which song to work on, or offer the one with the latest note, then call song_open.", songs };
+  }
+  const name = path.basename(dir);
+  let snapshots = [];
+  try {
+    snapshots = JSON.parse(await fs.readFile(path.join(dir, "mixtools-snapshots.json"), "utf8")).map((x) => ({ id: x.id, label: x.label, time: x.time }));
+  } catch {}
+  const bounceDir = path.join(ardour.BOUNCES, name);
+  const masterDir = path.join(ardour.MASTERS, name);
+  return {
+    song: name,
+    path: dir,
+    notes: await journal.read(dir, entries ?? 30),
+    snapshots: snapshots.slice(-10),
+    snapshot_count: snapshots.length,
+    latest_bounces: (await listFiles(bounceDir, (f) => f.endsWith(".wav") && !f.includes("-stem-"))).slice(-5).map((f) => path.join(bounceDir, f)),
+    masters: (await listFiles(masterDir, (f) => f.endsWith(".wav"))).map((f) => path.join(masterDir, f)),
+  };
+}
+
+async function journalWrite({ log, about, song }) {
+  if (!log && about == null) throw new Error("Give 'log', 'about', or both.");
+  const dir = await songDir(song);
+  if (!dir) throw new Error("No song is open in Ardour. Pass 'song'.");
+  if (about != null) await journal.setAbout(dir, about);
+  if (log) await journal.append(dir, log);
+  return { song: path.basename(dir), file: journal.journalPath(dir), wrote: { about: about != null, log: !!log } };
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp notes
+
+async function momentMark({ time, note }) {
+  const text = String(note ?? "").replace(/\s+/g, " ").trim();
+  if (!text) throw new Error("Give the person's note.");
+  let info;
+  try {
+    info = await ardour.sessionInfo();
+  } catch {
+    throw new Error("Ardour is not open with a song. Open the song first.");
+  }
+  const start = await ardour.sessionStartSample();
+  let sample;
+  if (time == null) {
+    // Mark where the person stopped Ardour's playhead.
+    sample = await ardour.stopAndReadPlayhead();
+    if (sample < start) throw new Error("Ardour's playhead is before the start of the song. Ask the person to play to the spot and stop there.");
+  } else {
+    sample = start + Math.round(parseTime(time) * info.sampleRate);
+  }
+  const t = (sample - start) / info.sampleRate;
+  const name = `${formatTime(t)} ${text}`.slice(0, 60);
+  const marker = await ardour.addMarkerAt(sample, name);
+  await autoLog(songDir(), `Note at ${formatTime(t)}: "${text}". Marked in Ardour.`);
+  return { marker: name, time: formatTime(t), seconds: Math.round(t * 100) / 100, ...marker, playhead: "at the marker; playback stopped" };
+}
+
+/** Map song seconds to Ardour samples when the bounce belongs to the open song. */
+async function sampleMapFor(file) {
+  try {
+    const info = await ardour.sessionInfo();
+    const open = info.path.replace(/\/$/, "");
+    if ((await songDirForFile(file)) !== open) return null;
+    const start = await ardour.sessionStartSample();
+    return (s) => start + Math.round(s * info.sampleRate);
+  } catch {
+    return null;
+  }
+}
+
 const HANDLERS = {
   mixtools_status: () => status(),
   mixtools_setup: () => setup(),
-  song_new: (a) => ardour.newSong(a.name, a.files, a.track_names),
+  song_new: async (a) => {
+    const r = await ardour.newSong(a.name, a.files, a.track_names);
+    await autoLog(r.path, `Song created from ${a.files.length} file${a.files.length === 1 ? "" : "s"}: ${a.files.map((f) => path.basename(f)).join(", ")}.`);
+    return r;
+  },
   song_open: async (a) => (a.path ? ardour.openSong(a.path) : { songs: await ardour.listSongs() }),
   ardour_tools: (a) => ardourTools(a),
   ardour_call: (a) => ardour.call(a.name, a.arguments ?? {}),
-  snapshot_save: (a) => ardour.snapshotSave(a.label),
+  snapshot_save: async (a) => {
+    const r = await ardour.snapshotSave(a.label);
+    await autoLog(songDir(), `Snapshot ${r.id} saved: "${r.label}".`);
+    return r;
+  },
+  mix_starting_balance: async (a) => {
+    const r = await startingBalance(a);
+    const set = r.tracks.filter((t) => !t.left_alone);
+    await autoLog(songDir(),
+      `Starting balance: faders set on ${set.length} track${set.length === 1 ? "" : "s"} (${set.map((t) => `${t.track} ${t.fader_db} dB as ${t.role.replace(/_/g, " ")}`).join(", ")}). Mix peaks at ${r.mix.true_peak_dbtp} dBTP. Snapshot ${r.snapshots.before} has the levels before.`);
+    return r;
+  },
   snapshot_list: () => ardour.snapshotList(),
-  snapshot_restore: (a) => ardour.snapshotRestore(a.id),
-  bounce: (a) => ardour.bounce(a.label, a.stems ?? []),
+  snapshot_restore: async (a) => {
+    const r = await ardour.snapshotRestore(a.id);
+    await autoLog(songDir(), `Restored snapshot ${r.restored.id} ("${r.restored.label}"). The settings before the restore are snapshot ${r.safety_snapshot.id}.`);
+    return r;
+  },
+  bounce: async (a) => {
+    const r = await ardour.bounce(a.label, a.stems ?? []);
+    await autoLog(songDir(), `Bounce "${a.label}": ${path.basename(r.mix)}${r.stems.length ? ` with stems of ${r.stems.map((x) => x.track).join(", ")}` : ""}.`);
+    return r;
+  },
   audio_measure: (a) => measure(a.path, a),
   audio_compare: (a) => compare(a.a, a.b, { start: a.a_start, end: a.a_end }, { start: a.b_start, end: a.b_end }),
   audio_spectrogram: async (a) => {
@@ -339,10 +661,38 @@ const HANDLERS = {
       ],
     };
   },
-  audio_play: (a) => play(a.path, a.start, a.end),
+  audio_play: (a) => play(a.path, a),
   audio_stop: () => stopPlayback(),
-  master_render: (a) => renderMaster(a, { mastersDir: ardour.MASTERS, bouncesDir: ardour.BOUNCES }),
-  release_check: (a) => releaseCheck(a, { referencesDir: ardour.REFERENCES, audioExts: AUDIO_EXTS }),
+  master_render: async (a) => {
+    const r = await renderMaster(a, { mastersDir: ardour.MASTERS, bouncesDir: ardour.BOUNCES });
+    const m = r.master_measurement;
+    await autoLog(songDirForFile(r.master),
+      `Master "${path.basename(r.master)}" from ${path.basename(a.source)}: ${m.loudness_lufs} LUFS, ${m.true_peak_dbtp} dBTP, limiter up to ${r.limiter.max_reduction_db} dB.${r.warnings.length ? ` ${r.warnings.length} warning${r.warnings.length === 1 ? "" : "s"}.` : ""}`);
+    return r;
+  },
+  master_versions: async (a) => {
+    const r = await makeVersions(a);
+    const made = [...r.versions.map((v) => v.version.replace(/_/g, " ")), ...(r.stems.length ? [`${r.stems.length} stems`] : [])];
+    await autoLog(songDirForFile(a.master), `Versions of "${path.basename(a.master)}": ${made.join(", ")}.${r.clean_spans ? ` Clean edit silences ${r.clean_spans.map((s) => `${s.start}-${s.end}`).join(", ")}.` : ""}`);
+    return r;
+  },
+  song_archive: async (a) => {
+    const dir = await songDir(a.song);
+    if (!dir) throw new Error("No song is open in Ardour. Pass 'song'.");
+    const r = await archiveSong(dir, { bounces: a.bounces ?? "final" });
+    await autoLog(dir, `Archived to ${path.basename(r.archive)} (${r.size_mb} MB).`);
+    return r;
+  },
+  release_check: async (a) => {
+    const r = await releaseCheck(a, { referencesDir: ardour.REFERENCES, audioExts: AUDIO_EXTS });
+    await autoLog(songDirForFile(a.path), `Release check on ${path.basename(a.path)}: ${r.verdict}`);
+    return r;
+  },
+  vocal_sibilance: (a) => sibilance(a.path, a),
+  moment_mark: (a) => momentMark(a),
+  moment_check: async (a) => momentCheck(a.path, a, await sampleMapFor(a.path)),
+  journal_read: (a) => journalRead(a),
+  journal_write: (a) => journalWrite(a),
   reference_list: () => referenceList(),
 };
 

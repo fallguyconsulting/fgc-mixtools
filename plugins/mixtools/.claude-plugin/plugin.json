@@ -1,6 +1,6 @@
 {
   "name": "mixtools",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Mix a song in Ardour with Claude. Claude imports your recordings, bounces the mix, measures it, compares it to songs you like, makes one small reversible change at a time, lets you hear before and after, and renders a release-ready master for streaming. Built for people who are not audio engineers.",
   "author": {
     "name": "Fall Guy Consulting"

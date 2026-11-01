@@ -60,6 +60,10 @@ Then call `mixtools_setup`.
 
 Call `mixtools_setup`. If it reports that Ardour is open, ask them to quit Ardour (the **Ardour9** menu, then **Quit**; click **Don't Save** if asked about a session you made in setup), then call `mixtools_setup` again.
 
+### The Mixtools De-Esser is not installed or out of date
+
+Call `mixtools_setup`. It installs the plugin even while Ardour is open, but Ardour finds plugins only when it starts. If Ardour is open, ask them to save and quit it (the **Ardour9** menu, then **Quit**), then open the song again with `song_open`.
+
 ### This Ardour cannot import audio
 
 They have a standard Ardour, not the mixtools build. Ask them to quit Ardour, drag **Ardour9** from Applications to the Trash, and install the mixtools build as described above.
