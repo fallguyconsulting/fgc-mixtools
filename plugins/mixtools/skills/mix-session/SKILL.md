@@ -107,6 +107,8 @@ The person's goal is a master ready for streaming services. Mixing and mastering
 
 `master_versions` makes each version from the same mix in Ardour with only one change, then masters it exactly like the approved master, so the versions line up with it and with each other. Ardour must have the mix the master was made from: if the tool says the mix changed, call `snapshot_restore` with the "final mix" snapshot and try again.
 
+Making versions takes minutes, so `master_versions` starts a background job and returns a `job_id` at once. Tell the person the versions are on their way. Then call `job_status` with that `job_id` until its `status` is `done` or `failed`; each call waits up to 45 seconds. The versions are in `result`. Until the job ends, tools that change Ardour refuse, so wait for it before changing the mix.
+
 - **Instrumental** mutes every vocal track. **TV mix** mutes only the lead vocal and keeps backing vocals. **A cappella** plays only the vocals. **Stems** renders groups of tracks alone (drums, bass, music, lead vocal, backing vocals) at mix level, so they add up to the mix; pass `stem_groups` if the person or the receiver wants other groups.
 - Check which tracks the tool will treat as vocals: tracks named vocal, vox, voice, lead, backing, harmony, and so on. If a vocal track has another name, pass `vocal_tracks` (every vocal track) and `lead_tracks`.
 - **Clean edit:** silence each word that must go, on the vocal tracks only; the music keeps playing.

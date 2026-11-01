@@ -6,9 +6,9 @@ Mixtools never edits your recordings. It saves the mixer settings before every c
 
 ## What you need
 
-- A Mac with Apple silicon
+- A Mac with macOS 11 or later, with Apple silicon or an Intel processor
 - The Claude desktop app
-- The mixtools build of Ardour (`Ardour-9.8.0-arm64.dmg`), from whoever gave you mixtools
+- The mixtools build of Ardour (`Ardour-9.8.0-universal.dmg`), from whoever gave you mixtools
 
 ## Install
 
@@ -60,7 +60,7 @@ The extension ships as a GitHub release asset. It needs the mixtools build of Ar
 
 ## Building Ardour
 
-`ardour/build-ardour.sh` downloads Ardour 9.8's source into `ardour/src/`, applies the patches in `ardour/patches/`, builds it, and writes a signed disk image to `ardour/dist/`. Git ignores all three output folders. The script's header lists the Homebrew libraries it needs.
+`ardour/build-ardour.sh` downloads Ardour 9.8's source into `ardour/src/`, applies the patches in `ardour/patches/`, builds it, and writes a signed disk image to `ardour/dist/`. It builds Ardour's libraries with Ardour's own recipe into `ardour/stack/`, for Apple silicon and for Intel (under Rosetta), then merges the two builds into one universal app that runs on macOS 11 or later. Git ignores all four output folders. The script's header lists the options.
 
 ```
 SIGN_IDENTITY="Developer ID Application: Fall Guy LLC (J4R9FTUGW2)" \

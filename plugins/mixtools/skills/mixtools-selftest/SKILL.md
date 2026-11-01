@@ -84,7 +84,7 @@ Call `audio_play` on the mix from 8 to 12 seconds, and ask the person whether th
 
 ### 11. Versions
 
-Call `master_versions` with the master, `versions` ["instrumental", "tv_mix", "a_cappella", "clean", "stems"], and `clean_spans` [`audio.expected.clean_span`] from step 3. Pass: four versions and the stems come back, each with a file.
+Call `master_versions` with the master, `versions` ["instrumental", "tv_mix", "a_cappella", "clean", "stems"], and `clean_spans` [`audio.expected.clean_span`] from step 3. It returns a `job_id` at once. Call `job_status` with that `job_id` until its `status` is `done` or `failed`. Pass: the job is `done`, and its `result` holds four versions and the stems, each with a file.
 
 ### 12. Archive
 

@@ -22,6 +22,8 @@ import { STREAMING_SERVICES } from "./master.js";
 import { SPECTROGRAM_GRID_HZ, spectrogram } from "./spectrogram.js";
 import { selftestSong, SELFTEST_SONG } from "./selftest.js";
 import * as feedback from "./feedback.js";
+import * as jobs from "./jobs.js";
+import { microphoneAccess, otherAudioApps } from "./macaudio.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version;
 const AUDIO_EXTS = new Set([".wav", ".aif", ".aiff", ".mp3", ".m4a", ".aac", ".flac", ".caf", ".ogg"]);
@@ -225,7 +227,7 @@ const TOOLS = [
   {
     name: "master_versions",
     description:
-      "Make alternate versions of an approved master: instrumental (every vocal track muted), tv_mix (lead vocal muted, backing vocals kept), a_cappella (only the vocal tracks), clean (stretches of the vocal tracks silenced, for a radio edit), and stems (groups of tracks alone: drums, bass, music, lead vocal, backing vocals). Ardour renders each version from the mix with only that change, then each is mastered with the master's exact gain, limiter, trim, and fades, so it lines up with the master sample for sample. Stems stay at mix level, without the limiter, so they add up to the mix. Ardour must have the song open with the same mix the master was made from; the tool checks that first. Every mute, solo, and region edit is put back afterwards. Writes beside the master, stems in a Stems folder. Making a version again replaces the earlier file of that version.",
+      "Make alternate versions of an approved master: instrumental (every vocal track muted), tv_mix (lead vocal muted, backing vocals kept), a_cappella (only the vocal tracks), clean (stretches of the vocal tracks silenced, for a radio edit), and stems (groups of tracks alone: drums, bass, music, lead vocal, backing vocals). Ardour renders each version from the mix with only that change, then each is mastered with the master's exact gain, limiter, trim, and fades, so it lines up with the master sample for sample. Stems stay at mix level, without the limiter, so they add up to the mix. Ardour must have the song open with the same mix the master was made from; the tool checks that first. Every mute, solo, and region edit is put back afterwards. Writes beside the master, stems in a Stems folder. Making a version again replaces the earlier file of that version. Making versions takes longer than Claude waits for one tool call, so this tool starts a background job and returns its job_id at once. Call job_status with that job_id until its status is done or failed; the result is in job_status's result. Until then, tools that change Ardour refuse.",
     inputSchema: {
       type: "object",
       properties: {
@@ -253,6 +255,20 @@ const TOOLS = [
         },
       },
       required: ["master"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "job_status",
+    description:
+      "Wait for a background job, such as one started by master_versions, and report it. Waits until the job finishes or wait_seconds pass, whichever comes first. Returns status running, done, or failed, the progress so far, and, when done, the job's result. While the status is running, call it again.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        job_id: { type: "string", description: "The job_id the starting tool returned." },
+        wait_seconds: { type: "number", minimum: 0, maximum: 50, description: "Longest wait for the job to finish. Default 45." },
+      },
+      required: ["job_id"],
       additionalProperties: false,
     },
   },
@@ -437,8 +453,13 @@ async function status() {
     mcp = true;
     importTool = (await ardour.listTools()).some((t) => t.name === "session_import_audio");
   } catch {}
-  const enabled = await ardour.mcpEnabledInConfig();
+  // Ardour rewrites its settings file while it runs, so a connected MCP
+  // server is the better answer while Ardour is open.
+  const saved = await ardour.mcpEnabledInConfig();
+  const enabled = mcp ? true : saved;
   const deesser = await deesserStatus();
+  const audioApps = await otherAudioApps();
+  const microphone = version ? await microphoneAccess() : "unknown";
   const folders = {};
   for (const [k, p] of Object.entries({ songs: ardour.SONGS, references: ardour.REFERENCES, bounces: ardour.BOUNCES, masters: ardour.MASTERS })) {
     folders[k] = { path: p, exists: await exists(p) };
@@ -447,7 +468,20 @@ async function status() {
   if (!version) problems.push({ problem: "Ardour is not installed in /Applications.", fix: "Install the Ardour build that came with mixtools: open its disk image and drag Ardour9 into Applications." });
   if (version && enabled === null) problems.push({ problem: "Ardour has never been opened.", fix: "Ask the person to open Ardour once, click through its first-run window, then quit it. Then call mixtools_setup." });
   if (version && enabled === false && !mcp) problems.push({ problem: "Ardour's MCP server is off.", fix: running ? "Ask the person to quit Ardour, then call mixtools_setup." : "Call mixtools_setup." });
-  if (running && !mcp && enabled) problems.push({ problem: "Ardour is open but its MCP server is not answering.", fix: "If Ardour is still starting or showing a window, ask the person to finish it. If no song is open, call song_open or song_new." });
+  if (running && !mcp && enabled) problems.push({ problem: "Ardour is open but its MCP server is not answering.", fix: "If Ardour is still starting or showing a window, ask the person to finish it. If Ardour shows an audio error such as \"failed to start process thread\", fix the other audio app and microphone problems in this list, then ask the person to quit Ardour and call song_open again. If no song is open, call song_open or song_new." });
+  if (audioApps.length) {
+    const apps = audioApps.join(" and ");
+    problems.push({
+      problem: `${apps} ${audioApps.length === 1 ? "is" : "are"} open. Another audio app can hold the Mac's sound, which stops Ardour's audio from starting ("failed to start process thread") or makes it freeze.`,
+      fix: `Ask the person to save their work in ${apps} and quit ${audioApps.length === 1 ? "it" : "them"}.${running ? " If Ardour's audio has stopped or failed, also ask them to quit Ardour, then open the song again with song_open." : ""}`,
+    });
+  }
+  if (microphone === "denied") {
+    problems.push({
+      problem: "macOS does not let Ardour use the microphone, which can stop Ardour's audio from starting.",
+      fix: `Ask the person to open System Settings, then Privacy & Security, then Microphone, and turn on Ardour9.${running ? " Then ask them to quit Ardour and open the song again with song_open." : ""}`,
+    });
+  }
   if (mcp && !importTool) problems.push({ problem: "This Ardour cannot import audio for mixtools.", fix: "Install the Ardour build that came with mixtools; the standard Ardour download lacks the import tool." });
   if (version && enabled !== null && !deesser.current) {
     problems.push({
@@ -460,7 +494,8 @@ async function status() {
 
   return {
     mixtools_version: VERSION,
-    ardour: { installed: !!version, version, open: running, mcp_server_on_in_settings: enabled, mcp_connected: mcp, import_supported: importTool },
+    ardour: { installed: !!version, version, open: running, mcp_server_on: enabled, mcp_connected: mcp, import_supported: importTool, microphone_access: microphone },
+    other_audio_apps: audioApps,
     song: session ? { name: session.sessionName, path: session.path, unsaved_changes: session.dirty, sample_rate: session.sampleRate } : null,
     workspace: folders,
     deesser: { name: "Mixtools De-Esser", installed: deesser.installed, up_to_date: deesser.current, plugin_id: deesser.plugin_id },
@@ -477,8 +512,13 @@ async function setup() {
       created.push(p);
     }
   }
+  let connected = false;
+  try {
+    await ardour.sessionInfo();
+    connected = true;
+  } catch {}
   const enabled = await ardour.mcpEnabledInConfig();
-  const mcp = enabled ? { changed: false, reason: "already on" } : await ardour.enableMcpInConfig();
+  const mcp = enabled || connected ? { changed: false, reason: "already on" } : await ardour.enableMcpInConfig();
   // Ardour decides it is running for the first time by its settings, so
   // install nothing into its settings folder before it has run once.
   const deesser = enabled === null ? { changed: false, reason: "Ardour has not been opened yet." } : await installDeesser();
@@ -722,12 +762,14 @@ const HANDLERS = {
       `Master "${path.basename(r.master)}" from ${path.basename(a.source)}: ${m.loudness_lufs} LUFS, ${m.true_peak_dbtp} dBTP, limiter up to ${r.limiter.max_reduction_db} dB.${r.warnings.length ? ` ${r.warnings.length} warning${r.warnings.length === 1 ? "" : "s"}.` : ""}`);
     return r;
   },
-  master_versions: async (a) => {
-    const r = await makeVersions(a);
-    const made = [...r.versions.map((v) => v.version.replace(/_/g, " ")), ...(r.stems.length ? [`${r.stems.length} stems`] : [])];
-    await autoLog(songDirForFile(a.master), `Versions of "${path.basename(a.master)}": ${made.join(", ")}.${r.clean_spans ? ` Clean edit silences ${r.clean_spans.map((s) => `${s.start}-${s.end}`).join(", ")}.` : ""}`);
-    return r;
-  },
+  master_versions: async (a) =>
+    jobs.startJob("versions", async (progress) => {
+      const r = await makeVersions(a, progress);
+      const made = [...r.versions.map((v) => v.version.replace(/_/g, " ")), ...(r.stems.length ? [`${r.stems.length} stems`] : [])];
+      await autoLog(songDirForFile(a.master), `Versions of "${path.basename(a.master)}": ${made.join(", ")}.${r.clean_spans ? ` Clean edit silences ${r.clean_spans.map((s) => `${s.start}-${s.end}`).join(", ")}.` : ""}`);
+      return r;
+    }),
+  job_status: (a) => jobs.jobStatus(a),
   song_archive: async (a) => {
     const dir = await songDir(a.song);
     if (!dir) throw new Error("No song is open in Ardour. Pass 'song'.");
@@ -758,6 +800,13 @@ function send(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+// Tools that change Ardour, or render through it. They wait while a
+// background job uses Ardour, so nothing changes the mix under the job.
+const CHANGES_ARDOUR = new Set([
+  "mixtools_setup", "song_new", "song_open", "ardour_call", "mix_starting_balance", "snapshot_save", "snapshot_restore",
+  "bounce", "master_versions", "song_archive", "moment_mark", "selftest_song",
+]);
+
 async function handle(msg) {
   const { id, method, params } = msg;
   if (id === undefined) return; // notification
@@ -779,6 +828,8 @@ async function handle(msg) {
       const handler = HANDLERS[params?.name];
       if (!handler) return send({ jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${params?.name}` } });
       try {
+        const busy = jobs.runningJob();
+        if (busy && CHANGES_ARDOUR.has(params.name)) throw new Error(jobs.busyMessage(busy));
         const out = await handler(params.arguments ?? {});
         const result = out?.content ? out : { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
         return send({ jsonrpc: "2.0", id, result });

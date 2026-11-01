@@ -105,7 +105,7 @@ export async function makeReport({ summary, selftest, show_in_finder }, { versio
   let name = `Mixtools report ${fileStamp(now)}.md`;
   for (let n = 2; await fs.access(path.join(REPORTS, name)).then(() => true, () => false); n++) name = `Mixtools report ${fileStamp(now)} ${n}.md`;
   const file = path.join(REPORTS, name);
-  const failed = (selftest ?? []).filter((r) => r.result === "fail").length;
+  const passed = (selftest ?? []).filter((r) => r.result === "pass" || r.result === "fixed").length;
   const lines = [
     `# Mixtools report, ${stamp(now)}`,
     "",
@@ -124,7 +124,8 @@ export async function makeReport({ summary, selftest, show_in_finder }, { versio
     "",
   ];
   if (selftest?.length) {
-    lines.push(`## Self-test: ${selftest.length - failed} of ${selftest.length} steps passed`, "", selftestTable(selftest), "");
+    const count = (k) => selftest.filter((r) => r.result === k).length;
+    lines.push(`## Self-test: ${passed} of ${selftest.length} steps passed (${count("fail")} failed, ${count("skipped")} skipped)`, "", selftestTable(selftest), "");
   }
   lines.push("## Notes", "", ...(fresh.length ? fresh.map((n) => `- ${n}`) : ["_No new notes._"]), "");
   lines.push("## Status", "", "```json", JSON.stringify({ ...status, workspace: undefined }, null, 2), "```", "");

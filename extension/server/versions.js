@@ -31,7 +31,7 @@ function byName(all, names, what) {
   });
 }
 
-export async function makeVersions(opts) {
+export async function makeVersions(opts, progress = () => {}) {
   const wanted = opts.versions?.length ? opts.versions : ["instrumental", "stems"];
   for (const v of wanted) if (!VERSIONS.includes(v)) throw new Error(`Unknown version "${v}". Versions: ${VERSIONS.join(", ")}.`);
   const settings = await masterSettings(opts.master);
@@ -59,12 +59,14 @@ export async function makeVersions(opts) {
   if (drift > -60) {
     throw new Error(`The mix in Ardour has changed since the master was made (it differs by up to ${round(drift)} dB against its loudest peak). Restore the snapshot the master was made from (usually "final mix"), then try again.`);
   }
+  progress("Checked that the mix in Ardour still matches the master.");
 
   const out = { master: opts.master, versions: [], stems: [], notes: [] };
   const master = async (key, mix) => {
     const r = await renderVersion(opts.master, mix, { label: VERSION_LABEL[key] });
     const m = await measure(r.file);
     out.versions.push({ version: key, file: r.file, loudness_lufs: m.loudness_lufs, true_peak_dbtp: m.true_peak_dbtp, limiter: r.limiter });
+    progress(`Made the ${VERSION_LABEL[key]} version.`);
   };
 
   if (wanted.includes("instrumental")) {
@@ -114,6 +116,7 @@ export async function makeVersions(opts) {
       files.push(mix);
       const r = await renderVersion(opts.master, mix, { label: g, stem: true, dir });
       out.stems.push({ stem: g, tracks: ts.map((t) => t.name), file: r.file });
+      progress(`Made the ${g} stem.`);
     }
     // Stems should add up to the mix. A compressor or limiter on the Master
     // bus stops that, because it reacts to the whole mix.

@@ -39,13 +39,21 @@ Handle each problem in this order. Call `mixtools_status` again after each fix.
 
 ### Ardour is not installed
 
-Mixtools needs the Ardour build that came with mixtools. The standard Ardour download lacks the import tool mixtools uses. Ask whether they received a file named like **Ardour-9.8.0-arm64.dmg**.
+Mixtools needs the Ardour build that came with mixtools. The standard Ardour download lacks the import tool mixtools uses. Ask whether they received a file named like **Ardour-9.8.0-universal.dmg**. It runs on Apple silicon and Intel Macs with macOS 11 or later.
 
-1. "Double-click **Ardour-9.8.0-arm64.dmg**. A window opens with Ardour9 and an Applications folder."
+1. "Double-click **Ardour-9.8.0-universal.dmg**. A window opens with Ardour9 and an Applications folder."
 2. "Drag **Ardour9** onto **Applications**."
 3. "Close that window, then right-click the Ardour disk on your desktop or in the Finder sidebar and choose **Eject**."
 
 If they don't have the file, stop and tell them to ask whoever gave them mixtools for it.
+
+### macOS says Ardour is not supported on this Mac
+
+They have an older mixtools build of Ardour made only for Apple silicon (named like **Ardour-9.8.0-arm64.dmg**), and their Mac has an Intel processor. Ask them to drag **Ardour9** from Applications to the Trash, then install the universal build as described above. If they don't have the universal build, stop and tell them to ask whoever gave them mixtools for it.
+
+### Another audio app is open, or Ardour cannot use the microphone
+
+Another audio app, such as Logic Pro, can hold the Mac's sound, and macOS can refuse Ardour the microphone. Either one stops Ardour's audio from starting (Ardour says "failed to start process thread") or makes it freeze. Follow the fix `mixtools_status` gives: ask them to save and quit the other app, or to turn on **Ardour9** in **System Settings**, then **Privacy & Security**, then **Microphone**. If Ardour was open, ask them to quit it, then open the song again with `song_open`.
 
 ### Ardour has never been opened
 

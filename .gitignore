@@ -2,7 +2,11 @@
 .claude/settings.local.json
 dist/
 
-# Ardour build: downloaded source, build output, staging
+# Ardour build: downloaded source, library stack, build output, staging
 ardour/src/
 ardour/dist/
 ardour/stage/
+ardour/stack/
+
+# Reports and notes sent in by mixtools users; they hold private details
+feedback/
