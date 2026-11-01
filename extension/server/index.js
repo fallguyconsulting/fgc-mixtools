@@ -20,6 +20,8 @@ import { formatTime, momentCheck, parseTime } from "./moment.js";
 import { preparePlayback, SIMULATIONS } from "./playback.js";
 import { STREAMING_SERVICES } from "./master.js";
 import { SPECTROGRAM_GRID_HZ, spectrogram } from "./spectrogram.js";
+import { selftestSong, SELFTEST_SONG } from "./selftest.js";
+import * as feedback from "./feedback.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version;
 const AUDIO_EXTS = new Set([".wav", ".aif", ".aiff", ".mp3", ".m4a", ".aac", ".flac", ".caf", ".ogg"]);
@@ -362,6 +364,55 @@ const TOOLS = [
     description: "List the reference songs in ~/Music/Mixtools/References with their length and loudness.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "selftest_song",
+    description:
+      `Make the self-test song: write generated stems (Kick, Snare, Bass, stereo Keys, Lead Vocal with "s" sounds, Backing Vocals in the chorus; 25 s at 120 BPM) to ~/Music/Mixtools/Self-Test Audio, create the song "${SELFTEST_SONG}" from them, and open it in Ardour. First deletes the previous self-test song with its bounces, masters, and archives; never touches any other song. Ardour must be closed. Returns the song, its sections, the lead vocal phrase times, and what the later checks should find. Use only when running the mixtools self-test.`,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "feedback_note",
+    description:
+      "Add one dated line to the notes for the mixtools team (~/Music/Mixtools/Reports/Notes for the mixtools team.md). kind 'problem': a mixtools tool failed, returned something wrong, or Ardour misbehaved. 'struggle': the person got confused, stuck, or frustrated, or had to repeat themselves. 'idea': something mixtools cannot do yet that would have helped, whether the person asked for it or you noticed it. Write the note so a developer who was not here understands it: what was attempted, what happened, and any error text. Returns how many notes no report has included yet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: feedback.KINDS },
+        note: { type: "string", description: "What happened or what would help, in one or two sentences, with tool names and error text." },
+        quote: { type: "string", description: "The person's own words, when they said something about it." },
+        song: { type: "string", description: "Song name, when it happened in a song." },
+      },
+      required: ["kind", "note"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "feedback_report",
+    description:
+      "Write a report for the mixtools team to ~/Music/Mixtools/Reports: a summary, the mixtools, Ardour, and macOS versions, every note no earlier report included, the self-test results when given, and the current status. Marks those notes as reported. With show_in_finder, opens a Finder window with the report selected, so the person can drag it into a message or email.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Two or three sentences for the team: what the person was doing and what matters most in this report." },
+        selftest: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              step: { type: "string" },
+              result: { type: "string", enum: feedback.RESULTS },
+              detail: { type: "string", description: "What the step found, the fix applied, or the error text." },
+            },
+            required: ["step", "result"],
+            additionalProperties: false,
+          },
+          description: "Self-test results, one per step, in order.",
+        },
+        show_in_finder: { type: "boolean", description: "Open a Finder window with the report selected." },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -413,6 +464,7 @@ async function status() {
     song: session ? { name: session.sessionName, path: session.path, unsaved_changes: session.dirty, sample_rate: session.sampleRate } : null,
     workspace: folders,
     deesser: { name: "Mixtools De-Esser", installed: deesser.installed, up_to_date: deesser.current, plugin_id: deesser.plugin_id },
+    feedback: { unsent_notes: await feedback.unsentCount().catch(() => 0), notes_file: feedback.NOTES_FILE, reports_folder: feedback.REPORTS },
     problems,
   };
 }
@@ -694,6 +746,9 @@ const HANDLERS = {
   journal_read: (a) => journalRead(a),
   journal_write: (a) => journalWrite(a),
   reference_list: () => referenceList(),
+  selftest_song: () => selftestSong(),
+  feedback_note: (a) => feedback.addNote(a, VERSION),
+  feedback_report: async (a) => feedback.makeReport(a, { version: VERSION, status: await status() }),
 };
 
 // ---------------------------------------------------------------------------

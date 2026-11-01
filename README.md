@@ -34,6 +34,16 @@ Have one audio file per instrument or voice ready, then tell Claude what you wan
 - "It sounds muddy compared to my reference."
 - "Make the drums punchier."
 
+## If something seems broken
+
+Start a new chat and say: **run the mixtools self-test**
+
+Claude makes a test song called "Mixtools Self-Test" from generated audio and tries every mixtools feature on it. Your own songs stay untouched. Claude fixes what it can, then writes a report and shows it in a Finder window. Drag the report into a message or email to whoever gave you mixtools.
+
+## Problems and ideas
+
+You don't need a GitHub account to report a problem or suggest an idea. While you work, Claude notes anything that breaks, anything that confuses you, and anything mixtools could do better. It adds these notes to `~/Music/Mixtools/Reports/Notes for the mixtools team.md`. When you finish, Claude offers to turn them into a report. Send the report to whoever gave you mixtools, the same way as a self-test report.
+
 ## What's in this repository
 
 | Path | What it is |
@@ -42,6 +52,7 @@ Have one audio file per instrument or voice ready, then tell Claude what you wan
 | `plugins/mixtools/` | The mixtools plugin. |
 | `plugins/mixtools/skills/mix-session/` | The skill that runs a mixing session. Its `references/` folder holds the word map, the Ardour cheat sheet, the loudness targets, and the tool reference. |
 | `plugins/mixtools/skills/mixtools-setup/` | The skill that walks a new user through setup. |
+| `plugins/mixtools/skills/mixtools-selftest/` | The self-test skill. It runs only when someone asks for the self-test by name. |
 | `extension/` | The mixtools desktop extension (`mixtools.mcpb`): a dependency-free Node.js MCP server that drives Ardour and measures audio. |
 
 The extension ships as a GitHub release asset. It needs the mixtools build of Ardour, which adds an audio import tool to Ardour's built-in MCP server and limits that server to connections from the same Mac.

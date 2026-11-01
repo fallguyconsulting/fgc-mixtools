@@ -12,7 +12,8 @@ Get the person from "I installed the plugin" to a working mix session. Do as muc
 - Give one step at a time. Wait for them to say it worked before the next step.
 - Name exactly what to click, using the words they will see on screen.
 - After each step, check the result yourself with a tool when one exists. Do not ask them to confirm what you can check.
-- If a step fails twice, stop and tell them plainly what is wrong and what to send to whoever gave them mixtools.
+- If a step fails twice, call `feedback_note` with kind `problem`, the step, and the exact error text. Then call `feedback_report` with a short `summary` and `show_in_finder` true, and ask them to drag the report into a message or email to whoever gave them mixtools. If the mixtools tools are missing, tell them plainly what is wrong instead.
+- When a step confuses them or takes several tries, call `feedback_note` with kind `struggle`, so the mixtools team can make that step easier.
 
 ## Step 1: Check for the extension
 
@@ -83,4 +84,4 @@ Reference songs are optional. They make the advice much better. Song files from 
 5. Call `audio_measure` on the bounce.
 6. Call `audio_play` on the first 10 seconds of the bounce and ask if they heard it.
 
-If all of these work, tell them setup is done and ask what they would like to change about their song. Then follow the `mix-session` skill.
+If all of these work, tell them setup is done. Mention that if anything ever seems broken, they can say "run the mixtools self-test", and Claude will check everything and make a report for the mixtools team. Then ask what they would like to change about their song, and follow the `mix-session` skill.

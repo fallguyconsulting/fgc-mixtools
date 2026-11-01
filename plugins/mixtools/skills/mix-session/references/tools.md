@@ -12,6 +12,8 @@ The workspace folder is `~/Music/Mixtools/`:
 | `Songs/<song>/Mix notes.md` | The song's mix notes, kept by `journal_write` and the automatic log. The person can read them and add their own lines under Log. |
 | `Masters/<song>/` | Release masters made by `master_render`: `<song> (master -14 LUFS).wav`. These are the files to upload. Versions from `master_versions` sit beside them (`<song> (master -14 LUFS, instrumental).wav`), and stems in `Stems (master -14 LUFS)/`. |
 | `Archives/` | Song archives made by `song_archive`: `<song> (archive 2026-10-31).zip`. |
+| `Reports/` | `Notes for the mixtools team.md`, kept by `feedback_note`, and reports made by `feedback_report`: `Mixtools report 2026-10-31 14-05.md`. The person sends reports to the mixtools team. |
+| `Self-Test Audio/` | The generated stems `selftest_song` makes the "Mixtools Self-Test" song from. Replaced on every self-test. |
 
 ## Setup and songs
 
@@ -107,3 +109,13 @@ These tools log automatically: `song_new`, `mix_starting_balance`, `snapshot_sav
 `master_render` records each master's settings in a hidden file beside it. A master made before mixtools 0.4 has no settings; render it again to make versions.
 
 The limiter cannot add more than about 12 dB of gain beyond what the loudness difference calls for. Past that point more gain adds distortion, not loudness, so `master_render` stops and reports the loudness it reached.
+
+## Notes for the mixtools team and the self-test
+
+| Tool | Does | Returns |
+| --- | --- | --- |
+| `feedback_note` | Adds a dated line to `Reports/Notes for the mixtools team.md`: `kind` (`problem`, `struggle`, or `idea`), the `note`, the person's words in `quote`, and the `song`. Stamps the mixtools version. | The notes file and `unsent_notes`: how many notes no report has included yet. |
+| `feedback_report` | Writes `Reports/Mixtools report <date time>.md`: the `summary`, the mixtools, Ardour, and macOS versions, every note no earlier report included, the `selftest` results (each `step`, `result` of `pass`, `fixed`, `fail`, or `skipped`, and `detail`), and the current status. Marks those notes as reported. `show_in_finder` opens a Finder window with the report selected. Refuses when there is nothing new to report. | `report` (its path), `notes_included`, `selftest_steps`, and `how_to_send`. |
+| `selftest_song` | Writes generated stems to `Self-Test Audio/` and makes the song "Mixtools Self-Test" from them: Kick, Snare, Bass, stereo Keys, Lead Vocal (quiet, one "s" sound at the start of each phrase), and Backing Vocals (chorus only); 25 seconds at 120 BPM. First deletes the previous self-test song and its bounces, masters, and archives; refuses if a song by that name was not made by the self-test. Needs Ardour closed. Only for the `mixtools-selftest` skill. | The song and its folder, the imported tracks, what it deleted, and `audio`: sections, lead vocal phrase times, and `expected` values for the checks (`moment_time`, `clean_span`, `vocal_tracks`, and what the starting balance and the "s" sound check should find). |
+
+`mixtools_status` also returns `feedback`: `unsent_notes`, `notes_file`, and `reports_folder`.
