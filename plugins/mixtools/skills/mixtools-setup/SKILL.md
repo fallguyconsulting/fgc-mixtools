@@ -39,9 +39,9 @@ Handle each problem in this order. Call `mixtools_status` again after each fix.
 
 ### Ardour is not installed
 
-Mixtools needs the Ardour build that came with mixtools. The standard Ardour download lacks the import tool mixtools uses. Ask whether they received a file named like **Ardour-9.8.0-universal.dmg**. It runs on Apple silicon and Intel Macs with macOS 11 or later.
+Mixtools needs the Ardour build that came with mixtools. The standard Ardour download lacks the import tool mixtools uses. Ask whether they received a file named like **Ardour-9.8.2-universal.dmg**. It runs on Apple silicon and Intel Macs with macOS 11 or later.
 
-1. "Double-click **Ardour-9.8.0-universal.dmg**. A window opens with Ardour9 and an Applications folder."
+1. "Double-click **Ardour-9.8.2-universal.dmg**. A window opens with Ardour9 and an Applications folder."
 2. "Drag **Ardour9** onto **Applications**."
 3. "Close that window, then right-click the Ardour disk on your desktop or in the Finder sidebar and choose **Eject**."
 
@@ -72,6 +72,10 @@ Call `mixtools_setup`. If it reports that Ardour is open, ask them to quit Ardou
 ### The Mixtools De-Esser is not installed or out of date
 
 Call `mixtools_setup`. It installs the plugin even while Ardour is open, but Ardour finds plugins only when it starts. If Ardour is open, ask them to save and quit it (the **Ardour9** menu, then **Quit**), then open the song again with `song_open`.
+
+### This is an older mixtools build of Ardour
+
+Mixing works, but instrument parts and scripts need the newer build. Tell the person in one sentence, and ask whether they have a file named like **Ardour-9.8.2-universal.dmg** or later. If they do, ask them to quit Ardour, drag **Ardour9** from Applications to the Trash, and install the new build as described above; their songs stay where they are. If they don't, tell them to ask whoever gave them mixtools for it, and carry on mixing.
 
 ### This Ardour cannot import audio
 

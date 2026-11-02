@@ -10,3 +10,6 @@ ardour/stack/
 
 # Reports and notes sent in by mixtools users; they hold private details
 feedback/
+
+# Local experiments, such as the music-writing tests
+experiments/

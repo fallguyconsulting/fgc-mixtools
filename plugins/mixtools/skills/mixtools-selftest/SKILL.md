@@ -28,7 +28,7 @@ Never fix a failure by changing the person's songs, deleting their files, or edi
 Look for the `mixtools_status` tool.
 
 - **Missing:** the extension is not installed. Follow step 2 of the `mixtools-setup` skill, then start the self-test again in a new chat.
-- **Present, but `selftest_song` or `feedback_report` is missing:** the extension is older than the plugin. Ask the person to install the latest extension, following step 2 of the `mixtools-setup` skill, then start the self-test again in a new chat.
+- **Present, but `selftest_song`, `feedback_report`, or `part_write` is missing:** the extension is older than the plugin. Ask the person to install the latest extension, following step 2 of the `mixtools-setup` skill, then start the self-test again in a new chat.
 
 ### 2. Status
 
@@ -38,7 +38,7 @@ Call `mixtools_status`. Fix each problem as the `mixtools-setup` skill describes
 
 If Ardour is open, ask the person to save their song and quit Ardour (Session menu, then Quit). Then call `selftest_song`. It opens Ardour and can wait up to two minutes for it. Keep the result: its `audio.expected` values drive the checks below.
 
-If `selftest_song` says Ardour did not finish opening, Ardour is probably showing a window, such as audio setup. Ask the person to click **Start** or **OK** in it, then quit Ardour without saving (the **Ardour9** menu, then **Quit**, then **Don't Save**). Then call `selftest_song` again; it replaces the half-made song. If it fails the same way twice, record `fail` and go to step 14.
+If `selftest_song` says Ardour did not finish opening, Ardour is probably showing a window, such as audio setup. Ask the person to click **Start** or **OK** in it, then quit Ardour without saving (the **Ardour9** menu, then **Quit**, then **Don't Save**). Then call `selftest_song` again; it replaces the half-made song. If it fails the same way twice, record `fail` and go to step 15.
 
 Pass: the result lists 6 imported tracks. From here on, before each step that changes anything, the open song must be "Mixtools Self-Test". If `mixtools_status` shows another song open, stop the self-test and tell the person.
 
@@ -95,7 +95,25 @@ Call `song_archive`. Pass: an `archive` path and a `size_mb` above 0 come back, 
 1. Call `journal_write` with log `Self-test ran.`, then `journal_read`. Pass: the log holds that line and the automatic lines for the bounces and the master.
 2. Call `reference_list`. Pass: it returns without error. An empty list is fine.
 
-### 14. Report
+### 14. Parts and scripts
+
+If `mixtools_status` showed `midi_import_supported` or `lua_supported` false, record `skipped` with "older Ardour build" and go to step 15.
+
+1. Call `part_write` with name `Self-Test Bass` and this note list:
+   ```
+   program 33
+   note G2 0 1 100
+   note D3 1 1 90
+   note G2 2 1 100
+   note F2 3 1 90
+   cc 11 0 110
+   ```
+   Pass: `notes` is 4.
+2. Call `midi_import` with part `Self-Test Bass` and bar 2. Pass: one track comes back, with 4 notes, starting at `2|1|0`.
+3. Call `ardour_lua` with purpose `Self-test: read the tempo.` and the script `return Temporal.TempoMap.read ():tempo_at (Temporal.timepos_t (0)):note_types_per_minute ()`. Pass: `ok` is true, `result` starts with 120, and `backup.file` comes back.
+4. Call `ardour_lua` with purpose `Self-test: a script that fails.` and the script `error ("self-test")`. Pass: `ok` is false and `error` mentions `self-test`.
+
+### 15. Report
 
 Call `feedback_report` with:
 
@@ -105,6 +123,6 @@ Call `feedback_report` with:
 
 Then tell the person the result in one or two sentences. Always ask them to send the report, because it also tells the team which versions work: "A Finder window shows the report. Please drag it into a message or email to the mixtools team."
 
-### 15. Finish
+### 16. Finish
 
 Tell them the self-test song stays in their song list until the next self-test replaces it, and they can ignore it. Offer to reopen the song they were working on: ask them to quit Ardour, then call `song_open` with that song.

@@ -175,6 +175,79 @@ export async function findTrack(nameOrId) {
 }
 
 // ---------------------------------------------------------------------------
+// Lua scripts and MIDI parts
+
+/** Ardour tools that the mixtools build of Ardour 9.8.2 adds. */
+export const MIDI_IMPORT_TOOL = "session_import_midi";
+export const LUA_TOOL = "session_run_lua";
+
+/**
+ * Run a Lua script in Ardour. Returns Ardour's report, { ok, output,
+ * outputCut, result, error }, whether or not the script failed.
+ */
+export async function runLua(script, timeoutSeconds = 10) {
+  const result = await rpc("tools/call", { name: LUA_TOOL, arguments: { script, timeoutSeconds } }, (timeoutSeconds + 15) * 1000);
+  const r = result.structuredContent;
+  if (!r) throw new Error(result.content?.map((c) => c.text).join(" ") || "Ardour did not run the script.");
+  const { session, ...rest } = r;
+  return rest;
+}
+
+/**
+ * Save the song, then save a copy of Ardour's whole session state (tracks,
+ * regions, plugins, mixer) as an Ardour snapshot that stays beside the song.
+ * Opening that snapshot file in Ardour brings everything back.
+ */
+export async function fullBackup() {
+  await call("session_save");
+  const info = await sessionInfo();
+  const stamp = localStamp(true);
+  let name = `mixtools backup ${stamp}`;
+  for (let n = 2; await exists(path.join(info.path, `${name}.ardour`)); n++) name = `mixtools backup ${stamp} ${n}`;
+  await call("session_save", { snapshotName: name, switchToSnapshot: false });
+  return { snapshot: name, file: path.join(info.path, `${name}.ardour`) };
+}
+
+/** Local date and time for file names, such as 2026-11-02 03.23.17 (with .107 milliseconds). */
+function localStamp(ms = false) {
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  const t = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}`;
+  return ms ? `${t}.${String(d.getMilliseconds()).padStart(3, "0")}` : t;
+}
+
+async function exists(p) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Import a MIDI file onto a new MIDI track. */
+export async function importMidi(file, { trackName, instrument, bar, beat } = {}) {
+  const args = { paths: [file], ...(trackName ? { trackNames: [trackName] } : {}), ...(instrument ? { instrument } : {}), ...(bar ? { bar } : {}), ...(beat ? { beat } : {}) };
+  const r = await call(MIDI_IMPORT_TOOL, args, 120000);
+  return r.imported ?? [];
+}
+
+/** Remove a track from the song. Ardour cannot undo this. */
+export async function removeTrack(id) {
+  const r = await runLua(
+    `local r = Session:route_by_id (PBD.ID (${JSON.stringify(String(id))}))
+assert (r and not r:isnil (), "no track with id ${String(id).replace(/[^0-9]/g, "")}")
+local rl = ARDOUR.RouteListPtr ()
+rl:push_back (r)
+Session:remove_routes (rl)
+return "removed"`,
+  );
+  if (!r.ok) throw new Error(`Could not remove the track: ${r.error}`);
+}
+
+export const renameTrack = (id, newName) => call("track_rename", { id: String(id), newName });
+
+// ---------------------------------------------------------------------------
 // Songs (Ardour sessions)
 
 const safeName = (s) => s.replace(/[^\w .-]+/g, "").trim().replace(/\s+/g, " ") || "Song";
@@ -264,6 +337,29 @@ export async function openSong(sessionDirOrFile) {
   const info = await waitForSession(dir);
   if (!info) throw new Error("Ardour did not finish opening the song within two minutes. If Ardour is showing a window, ask the person to click Start or OK, then try again.");
   return info;
+}
+
+/**
+ * Put a song back to a full backup made by fullBackup: with Ardour closed,
+ * keep a copy of the song's current state, copy the backup over the song's
+ * main session file, and open the song.
+ */
+export async function restoreBackup(backupFile) {
+  if (!backupFile.endsWith(".ardour") || !path.isAbsolute(backupFile)) throw new Error("Give the backup's .ardour file, as an absolute path.");
+  await fs.access(backupFile);
+  if (await isRunning()) throw new Error("Ardour is open. Ask the person to quit Ardour without saving, then try again.");
+  const dir = path.dirname(backupFile);
+  // A snapshot file names its session; the session's main file is <name>.ardour.
+  const name = (await fs.readFile(backupFile, "utf8")).match(/<Session\b[^>]*\bname="([^"]+)"/)?.[1];
+  if (!name) throw new Error(`${path.basename(backupFile)} is not an Ardour session file.`);
+  const main = path.join(dir, `${name.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&apos;/g, "'")}.ardour`);
+  await fs.access(main);
+  if (path.resolve(main) === path.resolve(backupFile)) throw new Error("That is the song's own file, not a backup.");
+  const kept = path.join(dir, `${path.basename(main, ".ardour")} before restore ${localStamp()}.ardour`);
+  await fs.copyFile(main, kept);
+  await fs.copyFile(backupFile, main);
+  const info = await openSong(main);
+  return { restored_from: backupFile, previous_state_kept_as: kept, song: info.sessionName };
 }
 
 // ---------------------------------------------------------------------------

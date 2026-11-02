@@ -19,7 +19,7 @@ The workspace folder is `~/Music/Mixtools/`:
 
 | Tool | Does | Returns |
 | --- | --- | --- |
-| `mixtools_status` | Checks Ardour, its MCP server, the open song, and the workspace. Also checks for other audio apps that are open (Logic Pro, GarageBand, Ableton Live, Pro Tools, and others) and whether macOS lets Ardour use the microphone; either can stop Ardour's audio from starting ("failed to start process thread") or make it freeze. | Ardour version and state (`microphone_access`: `allowed`, `denied`, `not asked`, or `unknown` when macOS hides it), `other_audio_apps`, the open song, folders, and a list of problems, each with its fix. |
+| `mixtools_status` | Checks Ardour, its MCP server, the open song, and the workspace. Also checks for other audio apps that are open (Logic Pro, GarageBand, Ableton Live, Pro Tools, and others) and whether macOS lets Ardour use the microphone; either can stop Ardour's audio from starting ("failed to start process thread") or make it freeze. | Ardour version and state (`import_supported`; `midi_import_supported` and `lua_supported`, false on mixtools builds of Ardour before 9.8.2; `microphone_access`: `allowed`, `denied`, `not asked`, or `unknown` when macOS hides it), `other_audio_apps`, the open song, folders, and a list of problems, each with its fix. |
 | `mixtools_setup` | Creates the workspace folders and turns on Ardour's MCP server. The second part needs Ardour closed. Safe to run again. | What changed, and a fresh status. |
 | `song_new` | Creates a session in `Songs/`, opens it in Ardour, and imports `files` as one track each, named by `track_names`. Needs Ardour closed. | Song folder and the created tracks. |
 | `song_open` | Opens a song. With no `path`, lists the songs instead. | Session info, or the song list. |
@@ -40,6 +40,16 @@ Starting levels by role, in dB against the lead vocal while each plays: lead_voc
 | --- | --- |
 | `ardour_tools` | Lists Ardour's tools, filtered by `filter`, or returns one tool's schema by `name`. |
 | `ardour_call` | Calls an Ardour tool by `name` with `arguments`. See `ardour.md`. |
+| `ardour_lua` | Runs a Lua `script` in Ardour with Ardour's Lua API, after saving a full backup of the song. `purpose` goes into the mix notes. The script cannot run programs or read or write files, and stops after `timeout_seconds` (default 10). Returns `ok`, `output` (what it printed, at most 16 KB; `outputCut` says when more was dropped), `result` (its return values as text), `error` (with the line number), and `backup` (`snapshot`, `file`). Needs the mixtools build of Ardour 9.8.2 or later. |
+| `song_restore_backup` | Puts the song back to a full backup (`file`, from `backup.file`). Needs Ardour closed. Keeps a copy of the state before the restore beside the song, then opens the song. |
+
+## Instrument parts
+
+| Tool | Does | Returns |
+| --- | --- | --- |
+| `part_write` | Writes a part's note list (`notes`) under `name` into `Songs/<song>/mixtools-parts/`, and makes a MIDI file from it. The same name replaces the part's files. The tool's description has the note list format. | `part`, `notes_file`, `midi_file`, the note count, `beats`, `program`, `controllers`, and `pitch_bend`. |
+| `part_read` | Reads a part's note list back by `name`, or lists the song's parts. | `notes` and `midi_file`, or `parts`. |
+| `midi_import` | Puts a `part` (or a MIDI `file`) on a new MIDI track named `track_name` (default: the part's name) with an `instrument` (default General MIDI Synth), starting at `bar` and `beat`. The part follows the song's tempo. With `replace`, swaps the MIDI track of that name for the new one, after a full backup. Needs the mixtools build of Ardour 9.8.2 or later. | `tracks` (each `track`, `id`, `instrument`, `notes`, `starts_at`, `controllers`), `replaced`, and `backup`. |
 
 ## Snapshots
 
@@ -95,7 +105,7 @@ To reopen an archived song, the person double-clicks the zip, moves the song's s
 | `journal_read` | Reads a song's mix notes. `song` picks a song by name or folder; the default is the song open in Ardour. `entries` sets how many of the latest log lines come back (default 30). With no song open and no `song`, lists the songs instead. | `notes` (`about`, the latest `log` lines, `total_entries`), the latest 10 `snapshots` and `snapshot_count`, `latest_bounces` (the last 5 mix bounces), and `masters`. With no song: each song with its `latest_note`. |
 | `journal_write` | Adds a dated `log` line, replaces the `about` section, or both. | The notes file and what was written. |
 
-These tools log automatically: `song_new`, `mix_starting_balance`, `snapshot_save`, `snapshot_restore`, `bounce`, `moment_mark`, `master_render`, `master_versions`, `release_check`, and `song_archive`. A failed log never fails the tool.
+These tools log automatically: `song_new`, `mix_starting_balance`, `snapshot_save`, `snapshot_restore`, `bounce`, `moment_mark`, `master_render`, `master_versions`, `release_check`, `song_archive`, `part_write`, `midi_import`, `ardour_lua`, and `song_restore_backup`. A failed log never fails the tool.
 
 ## Mastering
 
@@ -105,7 +115,7 @@ These tools log automatically: `song_new`, `mix_starting_balance`, `snapshot_sav
 | `release_check` | Checks a file against the release targets: format, sample rate, channels, loudness (against `target_lufs`, else -16 to -9 LUFS), true peak (against `ceiling_dbtp`, else the default ceiling), clipping, true peak after a 256 kbps AAC encode, silence and clicks at the start and end, mono, and loudness range and crest factor against `references` (default: every song in References; an empty list skips it). | `ready`, a one-line `verdict`, `checks` (each `pass`, `warn`, `fail`, or `skipped`, with the measured value, the target, and a plain-words note), `streaming_playback_change_db` (how many dB Spotify, YouTube/Tidal/Amazon, and Apple Music turn the song up or down), the reference measurements, and the full measurement. |
 
 | `master_versions` | Makes other versions of a `master` made by `master_render`. `versions` (default instrumental and stems): `instrumental` (every vocal track muted), `tv_mix` (lead muted, backing vocals kept), `a_cappella` (only vocal tracks), `clean` (each of `clean_spans`, `{start, end}` in song time up to 5 s, silenced on the vocal tracks), and `stems` (groups of tracks alone; `stem_groups` maps a stem name to track names). `vocal_tracks` and `lead_tracks` override the tracks found by name. First renders the mix and stops if it differs from the master's source bounce. Each version gets the master's exact gain, limiter, trim, and fades; stems get only the trim and fades. Puts back every mute, solo, and region edit. Making a version again replaces the earlier file of that version. Runs as a background job, because it outlasts Claude's wait for one tool call. | A `job_id` at once. `job_status` returns the result when the job is done: `versions` (each `file`, `loudness_lufs`, `true_peak_dbtp`, `limiter`), `stems` (each `stem`, `tracks`, `file`), `stems_add_up_to_mix_within_db`, `clean_spans`, and `notes`. |
-| `job_status` | Waits for a background job (`job_id`) to finish, up to `wait_seconds` (default 45, at most 50). While a job runs, tools that change Ardour refuse: `mixtools_setup`, `song_new`, `song_open`, `ardour_call`, `mix_starting_balance`, `snapshot_save`, `snapshot_restore`, `bounce`, `master_versions`, `song_archive`, `moment_mark`, and `selftest_song`. A job ends if the extension restarts. | `status` (`running`, `done`, or `failed`), `progress` lines, `seconds`, and `result` when done or `error` when failed. While running, call it again. |
+| `job_status` | Waits for a background job (`job_id`) to finish, up to `wait_seconds` (default 45, at most 50). While a job runs, tools that change Ardour refuse: `mixtools_setup`, `song_new`, `song_open`, `ardour_call`, `mix_starting_balance`, `snapshot_save`, `snapshot_restore`, `bounce`, `master_versions`, `song_archive`, `moment_mark`, `selftest_song`, `midi_import`, `ardour_lua`, and `song_restore_backup`. A job ends if the extension restarts. | `status` (`running`, `done`, or `failed`), `progress` lines, `seconds`, and `result` when done or `error` when failed. While running, call it again. |
 
 `master_render` records each master's settings in a hidden file beside it. A master made before mixtools 0.4 has no settings; render it again to make versions.
 

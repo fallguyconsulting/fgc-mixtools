@@ -99,7 +99,7 @@ Judge **major / minor / patch** from what the change set does to what users and 
 
 | Level | When |
 | --- | --- |
-| **major** | A skill or extension tool is removed or renamed; a tool argument is removed, renamed, or changes meaning; the workspace layout changes so existing songs, references, or bounces stop being found; the extension starts requiring a newer mixtools Ardour build (for example, a new Ardour MCP tool from a new patch). |
+| **major** | A skill or extension tool is removed or renamed; a tool argument is removed, renamed, or changes meaning; the workspace layout changes so existing songs, references, or bounces stop being found; the extension starts requiring a newer mixtools Ardour build (for example, a new Ardour MCP tool from a new commit on our Ardour fork). |
 | **minor** | A new skill, extension tool, or tool argument; a new capability inside an existing skill or tool that stays backward compatible. |
 | **patch** | Everything else: skill wording, reference tables, measurement fixes, bug fixes, README edits. |
 

@@ -24,6 +24,7 @@ import { selftestSong, SELFTEST_SONG } from "./selftest.js";
 import * as feedback from "./feedback.js";
 import * as jobs from "./jobs.js";
 import { microphoneAccess, otherAudioApps } from "./macaudio.js";
+import * as parts from "./parts.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8")).version;
 const AUDIO_EXTS = new Set([".wav", ".aif", ".aiff", ".mp3", ".m4a", ".aac", ".flac", ".caf", ".ogg"]);
@@ -376,6 +377,77 @@ const TOOLS = [
     },
   },
   {
+    name: "part_write",
+    description:
+      `Write an instrument part for the song as a note list, and turn it into a MIDI file in the song folder (mixtools-parts). Writing a part with an existing name replaces that part's files; it does not touch Ardour. Then call midi_import to put it on a track. The note list format:\n${parts.FORMAT}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Part name, for example \"Bass\" or \"Ranat intro\". Also the default track name." },
+        notes: { type: "string", description: "The note list." },
+        song: { type: "string", description: "Song name or folder. Default: the song open in Ardour." },
+      },
+      required: ["name", "notes"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "part_read",
+    description: "Read back a part's note list, to revise it. With no name, list the song's parts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Part name." },
+        song: { type: "string", description: "Song name or folder. Default: the song open in Ardour." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "midi_import",
+    description:
+      "Put a part, or any MIDI file, on a new MIDI track in the song open in Ardour, with an instrument plugin. The part follows the song's tempo and starts at the given bar and beat. With replace, a MIDI track of the same name is swapped for the new one, after a full backup of the song; use it to revise a part. Needs the mixtools build of Ardour 9.8.2 or later.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        part: { type: "string", description: "Name of a part written with part_write." },
+        file: { type: "string", description: "Absolute path of a MIDI file, instead of a part." },
+        track_name: { type: "string", description: "Track name. Default: the part's name or the file's name." },
+        instrument: { type: "string", description: "Plugin id of the instrument, from ardour_call plugin_list_available. Default: General MIDI Synth, which plays the part's program sound." },
+        bar: { type: "integer", minimum: 1, description: "Bar where the part starts. Default 1." },
+        beat: { type: "number", minimum: 1, description: "Beat in that bar, may be fractional. Default 1." },
+        replace: { type: "boolean", description: "Replace the MIDI track that has this name." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ardour_lua",
+    description:
+      "Run a Lua script inside Ardour with Ardour's Lua API, for changes no other tool makes: the tempo map, automation, MIDI controller edits, plugin setup, region edits. The global Session is the open song. Before the script, saves a full backup of the song as an Ardour snapshot. The script cannot run programs or read or write files. Returns what it printed, its return values, any error with its line number, and the backup. Prefer a dedicated mixtools or Ardour tool when one does the job. Needs the mixtools build of Ardour 9.8.2 or later.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        script: { type: "string", description: "Lua source. Its return values come back as text." },
+        purpose: { type: "string", description: "One plain sentence for the song's mix notes saying what the script does." },
+        timeout_seconds: { type: "integer", minimum: 1, maximum: 60, description: "Stop the script after this many seconds. Default 10." },
+      },
+      required: ["script", "purpose"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "song_restore_backup",
+    description:
+      "Put the song back to a full backup that midi_import or ardour_lua saved, undoing everything since. Ardour must be closed: ask the person to quit Ardour without saving first. Keeps a copy of the song's state before the restore, then opens the song.",
+    inputSchema: {
+      type: "object",
+      properties: { file: { type: "string", description: "The backup's .ardour file, from the backup.file field of midi_import or ardour_lua." } },
+      required: ["file"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "reference_list",
     description: "List the reference songs in ~/Music/Mixtools/References with their length and loudness.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -447,11 +519,14 @@ async function status() {
   const problems = [];
   const version = await ardour.appVersion();
   const running = await ardour.isRunning();
-  let session = null, mcp = false, importTool = false;
+  let session = null, mcp = false, importTool = false, midiTool = false, luaTool = false;
   try {
     session = await ardour.sessionInfo();
     mcp = true;
-    importTool = (await ardour.listTools()).some((t) => t.name === "session_import_audio");
+    const names = new Set((await ardour.listTools()).map((t) => t.name));
+    importTool = names.has("session_import_audio");
+    midiTool = names.has(ardour.MIDI_IMPORT_TOOL);
+    luaTool = names.has(ardour.LUA_TOOL);
   } catch {}
   // Ardour rewrites its settings file while it runs, so a connected MCP
   // server is the better answer while Ardour is open.
@@ -483,6 +558,12 @@ async function status() {
     });
   }
   if (mcp && !importTool) problems.push({ problem: "This Ardour cannot import audio for mixtools.", fix: "Install the Ardour build that came with mixtools; the standard Ardour download lacks the import tool." });
+  if (mcp && importTool && (!midiTool || !luaTool)) {
+    problems.push({
+      problem: "This is an older mixtools build of Ardour. It cannot add instrument parts (midi_import) or run scripts (ardour_lua). Mixing still works.",
+      fix: "Tell the person that writing instrument parts needs the newer mixtools build of Ardour, Ardour-9.8.2-universal.dmg or later, from whoever gave them mixtools. When they have it, follow the mixtools-setup skill to install it.",
+    });
+  }
   if (version && enabled !== null && !deesser.current) {
     problems.push({
       problem: deesser.installed ? "The Mixtools De-Esser in Ardour is out of date." : "The Mixtools De-Esser is not installed in Ardour.",
@@ -494,7 +575,7 @@ async function status() {
 
   return {
     mixtools_version: VERSION,
-    ardour: { installed: !!version, version, open: running, mcp_server_on: enabled, mcp_connected: mcp, import_supported: importTool, microphone_access: microphone },
+    ardour: { installed: !!version, version, open: running, mcp_server_on: enabled, mcp_connected: mcp, import_supported: importTool, midi_import_supported: midiTool, lua_supported: luaTool, microphone_access: microphone },
     other_audio_apps: audioApps,
     song: session ? { name: session.sessionName, path: session.path, unsaved_changes: session.dirty, sample_rate: session.sampleRate } : null,
     workspace: folders,
@@ -582,6 +663,74 @@ async function ardourTools({ filter, name }) {
   }
   const f = (filter || "").toLowerCase();
   return tools.filter((t) => !f || t.name.includes(f)).map((t) => ({ name: t.name, description: t.description }));
+}
+
+// ---------------------------------------------------------------------------
+// Instrument parts and scripts
+
+async function needTool(name) {
+  const names = new Set((await ardour.listTools()).map((t) => t.name));
+  if (!names.has(name)) {
+    throw new Error("This Ardour is an older mixtools build without instrument parts and scripts. Call mixtools_status and follow its fix.");
+  }
+}
+
+async function midiImport(a) {
+  if (!!a.part === !!a.file) throw new Error("Give either 'part' or 'file'.");
+  await needTool(ardour.MIDI_IMPORT_TOOL);
+  const dir = await songDir();
+  if (!dir) throw new Error("No song is open in Ardour. Open the song first.");
+  let file = a.file;
+  let partName = null;
+  if (a.part) {
+    const p = await parts.readPart(dir, a.part);
+    file = p.midi_file;
+    partName = p.part;
+  } else if (!path.isAbsolute(file) || !(await exists(file))) {
+    throw new Error(`No MIDI file at ${file}. Give an absolute path.`);
+  }
+  const trackName = a.track_name || partName || path.basename(file).replace(/\.[^.]+$/, "");
+
+  const existing = (await ardour.tracks()).find((t) => t.name.toLowerCase() === trackName.toLowerCase());
+  let backup = null;
+  if (existing) {
+    if (!a.replace) throw new Error(`The song already has a track named "${existing.name}". Pass replace: true to swap it for this part, or give another track_name.`);
+    if (existing.type !== "midi_track") throw new Error(`"${existing.name}" is not a MIDI track, so midi_import will not replace it. Give another track_name.`);
+    backup = await ardour.fullBackup();
+  }
+
+  const imported = await ardour.importMidi(file, { trackName, instrument: a.instrument, bar: a.bar, beat: a.beat });
+  if (!imported.length) throw new Error("Ardour imported nothing from the file.");
+  if (existing) {
+    await ardour.removeTrack(existing.id);
+    if (imported.length === 1 && imported[0].trackName !== existing.name) {
+      await ardour.renameTrack(imported[0].trackId, existing.name);
+      imported[0].trackName = existing.name;
+    }
+  }
+  await ardour.call("session_save");
+
+  const what = partName ? `part "${partName}"` : path.basename(file);
+  await autoLog(songDir(),
+    `${existing ? "Replaced" : "Added"} ${what} on track${imported.length === 1 ? "" : "s"} ${imported.map((t) => `"${t.trackName}" (${t.instrument}, ${t.notes} notes, from ${t.positionBbt?.text ?? "1|1|0"})`).join(", ")}.${backup ? ` Backup before replacing: ${backup.snapshot}.` : ""}`);
+  return {
+    tracks: imported.map((t) => ({ track: t.trackName, id: t.trackId, instrument: t.instrument, notes: t.notes, starts_at: t.positionBbt?.text, controllers: t.controllers })),
+    replaced: existing ? existing.name : null,
+    backup,
+  };
+}
+
+async function ardourLua(a) {
+  await needTool(ardour.LUA_TOOL);
+  const purpose = String(a.purpose ?? "").replace(/\s+/g, " ").trim();
+  if (!purpose) throw new Error("Give 'purpose': one plain sentence saying what the script does.");
+  const backup = await ardour.fullBackup();
+  const r = await ardour.runLua(a.script, a.timeout_seconds ?? 10);
+  await autoLog(songDir(), `Script: ${purpose} ${r.ok ? "It ran." : `It failed: ${String(r.error).split("\n")[0]}`} Backup before it: ${backup.snapshot}.`);
+  return {
+    ...r,
+    backup: { ...backup, restore: "To undo everything the script changed, ask the person to quit Ardour without saving, then call song_restore_backup with backup.file." },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -715,7 +864,29 @@ const HANDLERS = {
   },
   song_open: async (a) => (a.path ? ardour.openSong(a.path) : { songs: await ardour.listSongs() }),
   ardour_tools: (a) => ardourTools(a),
-  ardour_call: (a) => ardour.call(a.name, a.arguments ?? {}),
+  ardour_call: (a) => {
+    if (a.name === ardour.LUA_TOOL) throw new Error("Use ardour_lua to run a script. It saves a backup of the song first.");
+    return ardour.call(a.name, a.arguments ?? {});
+  },
+  part_write: async (a) => {
+    const dir = await songDir(a.song);
+    if (!dir) throw new Error("No song is open in Ardour. Pass 'song'.");
+    const r = await parts.writePart(dir, a.name, a.notes);
+    await autoLog(dir, `Part "${r.part}" written: ${r.notes} notes over ${r.beats} beats.`);
+    return { ...r, next: `Call midi_import with part "${r.part}".` };
+  },
+  part_read: async (a) => {
+    const dir = await songDir(a.song);
+    if (!dir) throw new Error("No song is open in Ardour. Pass 'song'.");
+    return a.name ? parts.readPart(dir, a.name) : { song: path.basename(dir), parts: await parts.listParts(dir) };
+  },
+  midi_import: (a) => midiImport(a),
+  song_restore_backup: async (a) => {
+    const r = await ardour.restoreBackup(a.file);
+    await autoLog(songDir(), `Restored the song from backup ${path.basename(a.file)}. The state before the restore is kept as ${path.basename(r.previous_state_kept_as)}.`);
+    return r;
+  },
+  ardour_lua: (a) => ardourLua(a),
   snapshot_save: async (a) => {
     const r = await ardour.snapshotSave(a.label);
     await autoLog(songDir(), `Snapshot ${r.id} saved: "${r.label}".`);
@@ -804,7 +975,7 @@ function send(msg) {
 // background job uses Ardour, so nothing changes the mix under the job.
 const CHANGES_ARDOUR = new Set([
   "mixtools_setup", "song_new", "song_open", "ardour_call", "mix_starting_balance", "snapshot_save", "snapshot_restore",
-  "bounce", "master_versions", "song_archive", "moment_mark", "selftest_song",
+  "bounce", "master_versions", "song_archive", "moment_mark", "selftest_song", "midi_import", "ardour_lua", "song_restore_backup",
 ]);
 
 async function handle(msg) {

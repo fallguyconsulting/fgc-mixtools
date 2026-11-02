@@ -54,13 +54,15 @@ You don't need a GitHub account to report a problem or suggest an idea. While yo
 | `plugins/mixtools/skills/mixtools-setup/` | The skill that walks a new user through setup. |
 | `plugins/mixtools/skills/mixtools-selftest/` | The self-test skill. It runs only when someone asks for the self-test by name. |
 | `extension/` | The mixtools desktop extension (`mixtools.mcpb`): a dependency-free Node.js MCP server that drives Ardour and measures audio. |
-| `ardour/` | The script that builds the mixtools build of Ardour, and our patch to Ardour's source. |
+| `ardour/` | The script that builds the mixtools build of Ardour from our fork of Ardour. |
 
 The extension ships as a GitHub release asset. It needs the mixtools build of Ardour, which adds an audio import tool to Ardour's built-in MCP server and limits that server to connections from the same Mac.
 
 ## Building Ardour
 
-`ardour/build-ardour.sh` downloads Ardour 9.8's source into `ardour/src/`, applies the patches in `ardour/patches/`, builds it, and writes a signed disk image to `ardour/dist/`. It builds Ardour's libraries with Ardour's own recipe into `ardour/stack/`, for Apple silicon and for Intel (under Rosetta), then merges the two builds into one universal app that runs on macOS 11 or later. Git ignores all four output folders. The script's header lists the options.
+`ardour/build-ardour.sh` downloads our fork of Ardour into `ardour/src/`, builds it, and writes a signed disk image to `ardour/dist/`. It builds Ardour's libraries with Ardour's own recipe into `ardour/stack/`, for Apple silicon and for Intel (under Rosetta), then merges the two builds into one universal app that runs on macOS 11 or later. Git ignores all four output folders. The script's header lists the options.
+
+Our changes to Ardour live in the private fork [fallguyconsulting/ardour](https://github.com/fallguyconsulting/ardour), on the `mixtools` branch. The branch starts at Ardour's 9.8 release tag and adds one commit per change. The build script pins the commit it builds in `ARDOUR_COMMIT`.
 
 ```
 SIGN_IDENTITY="Developer ID Application: Fall Guy LLC (J4R9FTUGW2)" \

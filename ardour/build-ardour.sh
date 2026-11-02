@@ -13,7 +13,7 @@
 #                                          # then package with SKIP_BUILD=1
 #   NOTARY_PROFILE=mixtools-notary SIGN_IDENTITY="..." ardour/build-ardour.sh
 #                                          # also notarize and staple the disk image
-#   NOTARY_PROFILE=mixtools-notary NOTARIZE_ONLY=ardour/dist/Ardour-9.8.0-universal.dmg ardour/build-ardour.sh
+#   NOTARY_PROFILE=mixtools-notary NOTARIZE_ONLY=ardour/dist/Ardour-<version>-universal.dmg ardour/build-ardour.sh
 #                                          # notarize an existing signed disk image
 #
 # For each architecture the script:
@@ -21,8 +21,8 @@
 #      ardour/stack/<arch> with Ardour's own build-stack recipe, pinned to
 #      BUILD_TOOLS_COMMIT. The libraries run on macOS 11 and later. This runs
 #      once; later runs reuse the stack.
-#   2. clones Ardour's source at ARDOUR_TAG into ardour/src/<arch>, applies
-#      patches/, compiles it, and packages it with Ardour's osx_build.
+#   2. clones our fork of Ardour at ARDOUR_COMMIT into ardour/src/<arch>,
+#      compiles it, and packages it with Ardour's osx_build.
 # It then merges the two apps into one universal app, checks every binary,
 # signs the app, and writes the disk image.
 #
@@ -36,9 +36,12 @@
 # Output: ardour/dist/Ardour-<version>-universal.dmg (or -<arch>.dmg for one
 # architecture). Git ignores src/, stack/, dist/, and stage/.
 #
-# patches/ holds our changes to Ardour's source. They add a session/import_audio
-# tool to Ardour's MCP server, bind that server to 127.0.0.1, and refuse requests
-# from web pages.
+# Our changes to Ardour live in our fork, github.com/fallguyconsulting/ardour,
+# on the mixtools branch. That branch starts at Ardour's release tag and adds one
+# commit per change. Ardour numbers its version from `git describe`, so a build
+# of the branch reports <release>.<commits since the tag>, for example 9.8.1.
+# To ship a change: commit it to the fork's mixtools branch, push, and set
+# ARDOUR_COMMIT below to the new commit.
 #
 # Prerequisites: Xcode, git, and Rosetta for Intel builds. Homebrew is not used;
 # the build runs with a minimal PATH so Homebrew's libraries cannot leak in.
@@ -78,9 +81,9 @@ SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 MIN_MACOS=11.0
 JOBS="$(sysctl -n hw.ncpu)"
 
-ARDOUR_REPO=https://github.com/Ardour/ardour.git
-ARDOUR_TAG=9.8
-ARDOUR_COMMIT=22ed8656c2533e325322ff11831448e5123e0d4b
+ARDOUR_REPO=git@github.com:fallguyconsulting/ardour.git
+ARDOUR_BRANCH=mixtools
+ARDOUR_COMMIT=9df93b9542015154dbc7e29f8fd6759b490b255b
 # Ardour's own recipe for its library stack. This commit is the one Ardour's
 # official Intel Mac builds use.
 BUILD_TOOLS_REPO=git://git.ardour.org/ardour/ardour-build-tools.git
@@ -194,33 +197,34 @@ seed_cache() {
 	done
 }
 
-# Clone Ardour's source for one architecture and check its commit. Ardour reads
-# its version from `git describe`, so keep a git checkout.
+# Clone our fork of Ardour for one architecture and check out ARDOUR_COMMIT.
+# Ardour reads its version from `git describe`, which needs the commits and tags
+# back to the release. A blobless clone has them all but downloads file contents
+# only for the commit checked out.
 fetch_source() {
-	local src="$HERE/src/$1"
-	[ -d "$src/.git" ] || git clone --depth 1 --branch "$ARDOUR_TAG" "$ARDOUR_REPO" "$src"
-	local head
-	head="$(git -C "$src" rev-parse HEAD)"
-	if [ "$head" != "$ARDOUR_COMMIT" ]; then
-		echo "$src is at $head, not Ardour $ARDOUR_TAG ($ARDOUR_COMMIT)." >&2
-		echo "Delete $src to download the right source, or update ARDOUR_TAG and ARDOUR_COMMIT." >&2
+	local src="$HERE/src/$1" origin
+	if [ ! -d "$src/.git" ]; then
+		git clone --filter=blob:none --no-checkout "$ARDOUR_REPO" "$src"
+		git -C "$src" checkout -q "$ARDOUR_COMMIT"
+		return
+	fi
+	origin="$(git -C "$src" remote get-url origin)"
+	if [ "$origin" != "$ARDOUR_REPO" ]; then
+		echo "$src is a clone of $origin, not $ARDOUR_REPO. Delete $src and run again." >&2
 		exit 1
 	fi
+	if [ -n "$(git -C "$src" status --porcelain --untracked-files=no)" ]; then
+		echo "$src has changes to Ardour's files. Commit them to the fork's $ARDOUR_BRANCH branch, or delete $src." >&2
+		exit 1
+	fi
+	git -C "$src" cat-file -e "$ARDOUR_COMMIT^{commit}" 2>/dev/null || git -C "$src" fetch --tags origin
+	git -C "$src" checkout -q "$ARDOUR_COMMIT"
 }
 
 build_ardour() {
 	local arch="$1" src="$HERE/src/$1" archflag=--arm64
 	[ "$arch" = arm64 ] || archflag=
 	cd "$src"
-	# Apply our patches to Ardour's source, skipping any already applied.
-	for p in "$HERE"/patches/*.patch; do
-		if git apply --reverse --check "$p" 2>/dev/null; then
-			echo "already applied: $(basename "$p")"
-		else
-			git apply "$p"
-			echo "applied: $(basename "$p")"
-		fi
-	done
 	in_arch "$arch" /usr/bin/python3 ./waf configure --optimize --with-backends=coreaudio \
 		--depstack-root="$STACKS/$arch" ${archflag:+"$archflag"}
 	in_arch "$arch" /usr/bin/python3 ./waf -j"$JOBS"
